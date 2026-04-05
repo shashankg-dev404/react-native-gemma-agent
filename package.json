@@ -43,6 +43,8 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-native": "^0.72.8",
     "jest": "^30.3.0",
     "ts-jest": "^29.4.9",
     "typescript": "^5.4.0"
