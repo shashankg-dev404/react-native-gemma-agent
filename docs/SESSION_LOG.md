@@ -219,34 +219,260 @@
 
 ---
 
+## Session 4 — 2026-04-06
+
+### What Was Done
+
+**Phases 3-6 — Full Agent Loop Built:**
+
+1. **Types Update** — Added to `src/types.ts`:
+   - `SkillType`, `SkillParameter`, `SkillManifest` — skill definition types
+   - `SkillResult` — result from skill execution
+   - `AgentEvent` — discriminated union for real-time UI events
+   - `AgentConfig` — orchestrator configuration
+
+2. **Phase 3: SkillRegistry** — Created `src/SkillRegistry.ts`:
+   - `registerSkill(skill)` with validation (JS skills need `html`, native need `execute`)
+   - `unregisterSkill()`, `getSkill()`, `getSkills()`, `hasSkill()`
+   - `toToolDefinitions()` — converts skills to OpenAI-compatible ToolDefinition[] for llama.rn
+   - No system prompt fragment needed — llama.rn handles tool format via Jinja templates
+
+3. **Phase 4: SkillSandbox** — Created `src/SkillSandbox.tsx`:
+   - Hidden WebView component with `forwardRef`/`useImperativeHandle`
+   - `execute(html, params, timeout)` → `Promise<SkillResult>`
+   - Injects bridge script calling `window['ai_edge_gallery_get_result']`
+   - Result returned via `ReactNativeWebView.postMessage` bridge
+   - Timeout handling, incognito mode, domStorage disabled
+
+4. **Phase 5: FunctionCallParser** — Created `src/FunctionCallParser.ts`:
+   - `validateToolCalls()` — validates llama.rn's auto-parsed `result.toolCalls` against registry
+   - `extractToolCallsFromText()` — fallback: scans raw text for JSON blocks via brace-depth tracking
+   - Handles both `{"tool_call": {...}}` and `{"name": "...", "arguments": {...}}` patterns
+
+5. **Phase 6: AgentOrchestrator** — Created `src/AgentOrchestrator.ts`:
+   - Full agent loop: inference → tool call check → skill exec → re-invoke model
+   - `sendMessage(text, onEvent)` → returns final response text
+   - Events: `thinking`, `token`, `skill_called`, `skill_result`, `response`, `error`
+   - Max chain depth (default 5), configurable skill timeout
+   - Supports JS skills (via SkillSandbox) and native skills (direct callback)
+   - `setSkillExecutor()` — React layer wires SkillSandbox's execute here
+
+6. **InferenceEngine Fix** — Updated `generate()` to pass through `tool_calls`, `tool_call_id`, `name` fields in messages for multi-turn tool protocol
+
+7. **Exports Updated** — `src/index.ts` exports all new classes, types, and functions
+
+### Key Decisions Made
+- **Two skill types**: `'js'` (WebView HTML) and `'native'` (RN callback) — simple, no SKILL.md parsing for MVP
+- **No system prompt injection for tools** — llama.rn handles tool formatting natively via Jinja templates, so SkillRegistry just converts to ToolDefinition[]
+- **SkillExecutor pattern** — AgentOrchestrator takes a callback function instead of directly owning the WebView, decoupling class logic from React component tree
+
+8. **Phase 7: React Hooks API** — Created 4 files:
+   - `GemmaAgentProvider.tsx` — Context provider owning all SDK instances, renders hidden SkillSandbox, wires executor via useLayoutEffect
+   - `useGemmaAgent.ts` — Main hook: sendMessage, messages, isProcessing, activeSkill, loadModel, unloadModel, reset, error
+   - `useModelDownload.ts` — Download hook: download, cancel, progress, checkModel, setModelPath, deleteModel, checkStorage
+   - `useSkillRegistry.ts` — Skill management: registerSkill, unregisterSkill, skills list, hasSkill, clear
+
+9. **Phase 8: Demo Skills** — Created 3 skills under `skills/`:
+   - `calculator.ts` — native skill, offline, safe math eval with `Function` constructor (only digits + operators allowed)
+   - `queryWikipedia.ts` — JS/WebView skill, fetches Wikipedia REST API with search fallback
+   - `webSearch.ts` — JS/WebView skill, uses DuckDuckGo Instant Answer API (free, no API key)
+   - `skills/index.ts` — re-exports all three
+
+10. **Exports Updated** — `src/index.ts` now exports all hooks, provider, and types from Phase 7
+
+### Key Decisions Made (continued)
+- **GemmaAgentProvider owns all instances** — created once via useRef, stable across re-renders
+- **SkillSandbox wired via useLayoutEffect** — guarantees executor is available before any user interaction
+- **Calculator as native skill** — demonstrates both skill types (native vs JS/WebView)
+- **DuckDuckGo for web search** — free, no API key, JSON API with CORS support
+
+### What Was NOT Done
+- Phase 9 (Demo App update — use SDK hooks in example/App.tsx)
+- Phase 10 (README, GitHub, NPM prep)
+- TypeScript build verification (no node_modules in SDK root)
+- Integration test on device
+
+---
+
 ## Next Session — What To Pick Up
 
-### Priority 1: Phase 3 — SkillRegistry
-1. Create `src/SkillRegistry.ts`
-2. Define skill manifest format (SKILL.md parsing)
-3. Implement `registerSkill()`, `unregisterSkill()`, `getSkills()`
-4. Implement `generateSystemPromptFragment()` — the text injected into LLM system prompt
+### Priority 1: Phase 9 — Demo App
+1. Update `example/App.tsx` to use the SDK hooks (GemmaAgentProvider, useGemmaAgent, useModelDownload)
+2. Install react-native-webview in example app
+3. Register demo skills (calculator, wikipedia, web_search)
+4. Build chat UI with skill status indicators
+5. Test on emulator
 
-### Priority 2: Phase 4 — WebView Sandbox
-1. Install `react-native-webview`
-2. Create `src/SkillSandbox.tsx` — hidden WebView component
-3. Implement `execute(skill, params)` → Promise<SkillResult>
-4. Handle timeouts and errors
+11. **Phase 9: Demo App Rewrite** — Rewrote `example/App.tsx`:
+   - Uses `GemmaAgentProvider`, `useGemmaAgent`, `useModelDownload` from SDK
+   - Chat bubble UI with streaming text, skill status badges, metrics bar
+   - Registers all 3 demo skills (calculator, wikipedia, web_search)
+   - "Load Model" / "Download" buttons for model lifecycle
+   - Log viewer tab for debugging skill calls
+   - Updated `metro.config.js` to resolve SDK source from parent dir
+   - Installed `react-native-webview` in example app
 
-### Priority 3: Phase 5 — FunctionCallParser (simplified)
-1. Thin adapter that reads `result.toolCalls` from InferenceEngine
-2. Validates tool call against SkillRegistry
-3. Fallback: scan `result.text` for JSON blocks if `toolCalls` is empty
+12. **Phase 10: README & Ship Prep**:
+   - Wrote comprehensive `README.md` — quick start, API reference, custom skill guide, architecture, model setup, performance benchmarks
+   - Created `LICENSE` (MIT)
 
-### Priority 4: Phase 6 — AgentOrchestrator
-1. Wire everything together: InferenceEngine → FunctionCallParser → SkillSandbox → loop
+### What Needs Manual Testing
+- Android build (`cd example && npx react-native run-android`)
+- Full agent loop: load model -> send message -> model calls skill -> skill returns -> model answers
+- Try: "What is 234 * 567?" (calculator), "Search Wikipedia for quantum computing" (wikipedia)
+- Verify skill status badge shows during execution
+- Verify streaming text works
 
-### Files to Read First
-```
-docs/SESSION_LOG.md (this file)
-docs/PLAN.md
-docs/ADR/002-function-call-format.md
-src/ModelManager.ts
-src/InferenceEngine.ts
-src/types.ts
-```
+---
+
+## Next Session — What To Pick Up
+
+### Bug Fixes Applied During Device Testing
+
+13. **Fixed: `type must be string, but is null` crash** — The crash happened on the second model invocation (after tool call + result appended to history). Root cause: llama.rn's native bridge receiving null/undefined fields in messages JSON.
+   - `InferenceEngine.ts`: `tool_calls[].id` now always has a fallback string. `arguments` defaults to `'{}'`. Message mapper re-maps tool_calls to ensure no null fields.
+   - `AgentOrchestrator.ts`: `tool_call_id` on tool role messages gets a generated fallback if missing.
+   - **STATUS: FIXED** — calculator skill now returns correct result.
+
+14. **Fixed: Input box hidden under nav bar** — Replaced RN's `SafeAreaView` with `react-native-safe-area-context`. Added `KeyboardAvoidingView`.
+
+15. **OPEN BUG: Thinking text shows as chat bubble** — Gemma 4's chain-of-thought reasoning (`<|channel>thought\n...`) appears as a regular assistant message in the chat. The text like "The user is asking for a multiplication..." shows alongside the actual answer.
+   - **Root cause**: `AgentOrchestrator.ts` line ~132 stores `result.content` as the assistant message content when making a tool call. llama.rn's `result.content` includes the thinking text.
+   - **Attempted fix 1**: Filter streaming tokens by special token strings → Failed (tokens arrive char-by-char, not as complete strings)
+   - **Attempted fix 2**: Buffer first 7 tokens to detect "thought" prefix → Partially worked for streaming but the real issue is the stored message in `orchestrator.conversation` history
+   - **Proposed fix A (SDK layer)**: Set `content: ''` on assistant messages that have `tool_calls`. Risk: may break Jinja template on next invocation.
+   - **Proposed fix B (App/Hook layer)**: Filter out assistant messages that have `tool_calls` from the rendered chat: `messages.filter(m => m.role === 'user' || (m.role === 'assistant' && !m.tool_calls?.length))`
+   - **Proposed fix C (SDK layer)**: Add a `reasoning` field to `Message` type. Store thinking in `reasoning`, keep `content` clean. The Orchestrator strips thinking from content before storing.
+   - Full bug report saved in memory: `bug_thinking_in_chat.md`
+
+16. **SDK now exposes `reasoning` separately** — Added `reasoning: string | null` to `CompletionResult`, `AgentEvent.response`, and `UseGemmaAgentReturn` types. Developers can show/hide thinking as they choose.
+
+---
+
+## Session 5 — 2026-04-06
+
+### What Was Done
+
+**P0 Bug Fix: Thinking text in chat bubbles — FIXED**
+
+17. **Fixed: Thinking text no longer shows as chat bubble** — 3-layer fix:
+   - **AgentOrchestrator.ts**: Set `content: ''` on assistant messages with `tool_calls`. Thinking text was stored in content and rendered as a chat bubble. Empty string is safe for llama.rn's Jinja template (OpenAI format expects null/empty content on tool-call assistant messages).
+   - **App.tsx**: Added filter to skip assistant messages with `tool_calls` from rendering: `(m.role === 'assistant' && !m.tool_calls?.length)`. Defense-in-depth — no empty bubbles.
+   - **useGemmaAgent.ts**: Added `thinking` event handler that resets streaming state (`streamingText`, `tokenBuffer`, `seenContent`) at the start of each generation loop. Combined with existing "thought" prefix buffer detection.
+
+### Files Modified
+- `src/AgentOrchestrator.ts` — line ~128: `content: ''` for tool-call messages
+- `src/useGemmaAgent.ts` — added `thinking` case in event switch
+- `example/App.tsx` — added `!m.tool_calls?.length` filter on message rendering
+
+---
+
+18. **Device testing completed** — Shashank tested on device:
+   - Calculator skill: WORKING (correct results)
+   - Wikipedia skill: WORKING (LaTeX artifacts in output — `$E=mc^2$`)
+   - Web search (DDG): PARTIAL — fails on broad queries like "latest React Native news", works for well-known topics like "climate change". DDG Instant Answer API only has pre-computed answers.
+   - Chained skills (wiki + calculator): WORKING — Tokyo population + 15% calculation correct
+   - No-results handling: WORKING — "uwueehwe67272" returns graceful message
+   - Model outputs markdown bold (`**text**`) rendered as raw text — cosmetic, app's job to render
+
+19. **Research: Smarter Skill Handling** — Ran /last30days + 5 web searches:
+   - At ~50 tools, accuracy 84-95%. At ~200 tools, drops to 41-83%.
+   - Each skill costs ~50-100 tokens. Practical limit: 10-15 skills at 4096 context.
+   - Approaches evaluated: semantic vector routing (97% accuracy, needs embedding model), MemTool (0-60% on small models), small router model (2x memory), BM25 keyword scoring (85-90%, zero overhead), skill categories (manual, zero cost).
+   - Decision: BM25 pre-filter as opt-in for v0.1.0, skill categories for v0.2.
+   - Sources: arxiv.org/abs/2507.21428 (MemTool), arxiv.org/html/2603.20313 (semantic MCP tool selection), r/LocalLLaMA (1B routing model)
+
+20. **Feature decisions for v0.1.0:**
+   - Strip LaTeX from Wikipedia skill
+   - Swap DDG with SearXNG for web search
+   - Add `requiresNetwork: boolean` to SkillManifest
+   - BM25 skill pre-filter (opt-in via `skillRouting: 'bm25'`)
+   - Context usage API (`getRemainingContext()`)
+   - Unit tests (deterministic + mocked trajectory)
+
+21. **Eval testing discussion** — Agreed on practical eval tiers:
+   - Tier 1: Deterministic unit tests (BM25 scoring, parser, registry, LaTeX) — runs in CI
+   - Tier 2: Mocked trajectory tests (mock InferenceEngine, test orchestrator loop) — runs in CI
+   - Tier 3: On-device eval harness (stretch goal) — manual run on phone
+   - Skipped: LLM-as-Judge (costs money), agent simulation (overkill), LangSmith (no production data)
+
+22. **Documentation updated:**
+   - `docs/PLAN.md` — added Phase 11 (skill quality), Phase 12 (BM25), Phase 13 (context API), Phase 14 (tests)
+   - `README.md` — comprehensive rewrite with: context window details, skill limits, native skill use cases (location/calendar/health/gallery), BM25 routing, configuration reference, memory model explanation
+   - Bug memory updated to FIXED
+   - SDK technical details saved to memory
+
+### Files Modified
+- `docs/PLAN.md` — Phases 11-14 added, stretch goals updated
+- `README.md` — comprehensive rewrite with technical details
+- `~/.claude/.../memory/bug_thinking_in_chat.md` — updated to FIXED
+- `~/.claude/.../memory/sdk_technical_details.md` — new: key SDK facts for docs
+- `~/.claude/.../memory/MEMORY.md` — updated index
+
+---
+
+---
+
+## Session 6 — 2026-04-06
+
+### What Was Done
+
+**Phases 11-14 — Feature completion + tests:**
+
+23. **Phase 11: Skill Quality & Network Awareness**
+   - `skills/queryWikipedia.ts`: Added `stripLatex()` function in WebView HTML — strips `$...$` display/inline math, `\frac`, `\text`, `\sqrt`, `\displaystyle`, common symbols (×, ≈, ±), and leftover braces. Version bumped to 1.1.0.
+   - `skills/webSearch.ts`: Replaced DuckDuckGo Instant Answer API with SearXNG JSON API. Uses 3 public instances with automatic fallback (searx.be primary). Returns title + URL + snippet for top 5 results. Version bumped to 2.0.0.
+   - `src/types.ts`: Added `requiresNetwork?: boolean` to `SkillManifest`
+   - `src/AgentOrchestrator.ts`: Added `checkConnectivity()` — HEAD request to google.com/generate_204 with 3s timeout. Checks before executing any skill with `requiresNetwork: true`. Returns "No internet connection" error if offline.
+   - Updated all 3 skills: calculator (`requiresNetwork: false`), wikipedia (`true`), web_search (`true`)
+
+24. **Phase 12: BM25 Skill Pre-filter**
+   - Created `src/BM25Scorer.ts` (~100 lines): BM25 scoring with k1=1.5, b=0.75. Tokenizes skill name+description+parameters+instructions, builds inverted index, scores queries. `topN()` convenience method.
+   - `src/types.ts`: Added `skillRouting?: 'all' | 'bm25'` and `maxToolsPerInvocation?: number` to `AgentConfig`. Added `ContextUsage` type.
+   - `src/AgentOrchestrator.ts`: Added `getToolsForQuery()` — when routing is 'bm25' and skill count exceeds max, scores skills against user query and sends only top-N to model. Falls through to 'all' when skill count is within limit.
+   - `src/index.ts`: Exports `BM25Scorer` and `ContextUsage`
+
+25. **Phase 13: Context Usage API**
+   - `src/InferenceEngine.ts`: Added `getContextUsage()` — returns `{ used, total, percent }` based on last generation's prompt+predicted tokens vs configured context size. Tracks `_lastPromptTokens` and `_lastPredictedTokens`.
+   - `src/useGemmaAgent.ts`: Added `contextUsage` state, updated after each `sendMessage()`. Exposed in return value.
+
+26. **Phase 14: Unit & Integration Tests**
+   - Set up Jest with ts-jest (`jest.config.js`, added test script to package.json)
+   - 5 test suites, 60 tests, all passing in ~2s:
+     - `BM25Scorer.test.ts` (11 tests): ranking accuracy (math→calculator, factual→wikipedia, current→web_search), topN limits, empty inputs, re-indexing
+     - `FunctionCallParser.test.ts` (12 tests): validateToolCalls (known/unknown/malformed/empty/multiple), extractToolCallsFromText (tool_call pattern, name/arguments pattern, no JSON, malformed, unknown, empty, multiple)
+     - `SkillRegistry.test.ts` (10 tests): register/unregister, validation (JS needs html, native needs execute), getSkills, clear, toToolDefinitions format
+     - `stripLatex.test.ts` (14 tests): inline/display math, \frac, \text, \sqrt, \displaystyle, symbols, braces, empty string, plain text passthrough
+     - `AgentOrchestrator.test.ts` (13 tests): direct response, tool call→result→response trajectory, skill failure, max chain depth, thinking text suppression, concurrent send rejection, reset, BM25 routing (top-N filtering, all mode, count ≤ max), network awareness (offline blocks network skills, offline allows offline skills)
+
+### Files Created
+- `src/BM25Scorer.ts`
+- `src/__tests__/BM25Scorer.test.ts`
+- `src/__tests__/FunctionCallParser.test.ts`
+- `src/__tests__/SkillRegistry.test.ts`
+- `src/__tests__/stripLatex.test.ts`
+- `src/__tests__/AgentOrchestrator.test.ts`
+- `jest.config.js`
+
+### Files Modified
+- `src/types.ts` — requiresNetwork, skillRouting, maxToolsPerInvocation, ContextUsage
+- `src/AgentOrchestrator.ts` — BM25 routing, connectivity check, BM25Scorer import
+- `src/InferenceEngine.ts` — getContextUsage(), token tracking
+- `src/useGemmaAgent.ts` — contextUsage state + return
+- `src/index.ts` — BM25Scorer + ContextUsage exports
+- `skills/queryWikipedia.ts` — LaTeX stripping, requiresNetwork, version 1.1.0
+- `skills/webSearch.ts` — SearXNG with fallback instances, requiresNetwork, version 2.0.0
+- `skills/calculator.ts` — requiresNetwork: false
+- `package.json` — test script, jest/ts-jest devDependencies
+
+---
+
+## Next Session — What To Pick Up
+
+### Ready for Device Testing
+1. Build and test on Android: `cd example && npx react-native run-android`
+2. Test Wikipedia skill — verify no LaTeX artifacts in responses
+3. Test web search — verify SearXNG returns real results for broad queries
+4. Test offline: enable airplane mode, try calculator (should work), try wikipedia (should get "No internet" error)
+5. Test BM25 routing: would need to enable via config change in App.tsx
+6. Commit and push all code, tag v0.1.0

@@ -9,6 +9,7 @@ import type {
   Message,
   CompletionResult,
   CompletionTimings,
+  ContextUsage,
   GenerateOptions,
   TokenEvent,
   ToolCall,
@@ -44,6 +45,8 @@ export class InferenceEngine {
   private config: Required<InferenceEngineConfig>;
   private modelInfo: LoadedModelInfo | null = null;
   private _isGenerating = false;
+  private _lastPromptTokens = 0;
+  private _lastPredictedTokens = 0;
 
   constructor(config?: InferenceEngineConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -123,10 +126,31 @@ export class InferenceEngine {
     this._isGenerating = true;
 
     try {
-      const llamaMessages = messages.map(msg => ({
-        role: msg.role,
-        content: msg.content,
-      }));
+      const llamaMessages = messages.map(msg => {
+        const m: Record<string, unknown> = {
+          role: msg.role,
+          content: msg.content ?? '',
+        };
+        // Only include fields with actual string values — undefined/null
+        // fields become JSON null and crash llama.cpp's Jinja parser
+        if (msg.tool_calls && msg.tool_calls.length > 0) {
+          m.tool_calls = msg.tool_calls.map(tc => ({
+            type: tc.type,
+            id: tc.id ?? 'call_0',
+            function: {
+              name: tc.function.name,
+              arguments: tc.function.arguments ?? '{}',
+            },
+          }));
+        }
+        if (typeof msg.tool_call_id === 'string') {
+          m.tool_call_id = msg.tool_call_id;
+        }
+        if (typeof msg.name === 'string') {
+          m.name = msg.name;
+        }
+        return m;
+      });
 
       const completionParams: Record<string, unknown> = {
         messages: llamaMessages,
@@ -154,7 +178,10 @@ export class InferenceEngine {
         },
       );
 
-      return this.mapResult(result);
+      const mapped = this.mapResult(result);
+      this._lastPromptTokens = mapped.timings.promptTokens;
+      this._lastPredictedTokens = mapped.timings.predictedTokens;
+      return mapped;
     } finally {
       this._isGenerating = false;
     }
@@ -202,6 +229,20 @@ export class InferenceEngine {
   }
 
   /**
+   * Get current context window usage.
+   * Uses the last generation's prompt token count as an estimate of how
+   * much of the KV cache is filled. This is accurate when called right
+   * after generate() — the prompt tokens represent the full conversation
+   * history that was fed into the model.
+   */
+  getContextUsage(): ContextUsage {
+    const total = this.config.contextSize;
+    const used = this._lastPromptTokens + this._lastPredictedTokens;
+    const percent = total > 0 ? Math.round((used / total) * 100) : 0;
+    return { used, total, percent };
+  }
+
+  /**
    * Run a benchmark.
    * Returns prompt processing and token generation speeds.
    */
@@ -237,18 +278,19 @@ export class InferenceEngine {
       predictedPerSecond: result.timings.predicted_per_second,
     };
 
-    const toolCalls: ToolCall[] = (result.tool_calls ?? []).map(tc => ({
+    const toolCalls: ToolCall[] = (result.tool_calls ?? []).map((tc, i) => ({
       type: 'function' as const,
-      id: tc.id,
+      id: tc.id ?? `call_${i}`,
       function: {
         name: tc.function.name,
-        arguments: tc.function.arguments,
+        arguments: tc.function.arguments ?? '{}',
       },
     }));
 
     return {
       text: result.text,
       content: result.content ?? result.text,
+      reasoning: result.reasoning_content || null,
       toolCalls,
       timings,
       stoppedEos: result.stopped_eos,

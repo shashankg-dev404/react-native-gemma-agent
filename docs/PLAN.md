@@ -76,33 +76,17 @@
 > The brain of the agent — manages which skills are available and their metadata.
 
 ### Tasks
-- [ ] Define the Skill manifest format (inspired by Google's SKILL.md):
-  ```
-  {
-    name: "query_wikipedia",
-    description: "Search Wikipedia for factual information",
-    version: "1.0.0",
-    type: "js",                    // "js" | "text" | "native"
-    parameters: {                  // JSON Schema for what the model passes
-      query: { type: "string", description: "Search query" }
-    },
-    entrypoint: "scripts/index.html",
-    instructions: "..."            // LLM-facing instructions
-  }
-  ```
-- [ ] Create `SkillRegistry` class:
-  - `registerSkill(skill)` — add a skill from bundled assets
-  - `registerSkillFromURL(url)` — load a skill from remote URL
-  - `unregisterSkill(name)` — remove a skill
-  - `getSkills()` — list all registered skills
-  - `getSkill(name)` — get one skill by name
-  - `generateSystemPromptFragment()` — produce the text that gets injected into the LLM system prompt describing all available skills
-- [ ] Build the system prompt template that lists available skills with their names, descriptions, and parameter schemas so the model knows what tools it has
-- [ ] Test: register 3 skills, verify system prompt fragment is correct
+- [x] Define the Skill manifest format — `SkillManifest` type in `types.ts` (name, description, version, type, parameters, html, execute, instructions)
+- [x] Create `SkillRegistry` class (`src/SkillRegistry.ts`):
+  - `registerSkill(skill)` with validation
+  - `unregisterSkill(name)`, `getSkills()`, `getSkill(name)`, `hasSkill(name)`
+  - `toToolDefinitions()` — converts to OpenAI-compatible format for llama.rn
+- [x] Tool definitions passed via llama.rn's `tools` parameter (Jinja template handles prompt formatting — no manual system prompt fragment needed)
+- [ ] Test: register 3 skills, verify tool definitions are correct
 
 ### Exit Criteria
-- Skills can be registered, listed, and their metadata injected into system prompts
-- System prompt clearly instructs the model HOW to call skills (JSON format)
+- [x] Skills can be registered, listed, and converted to tool definitions
+- [x] llama.rn receives skills in OpenAI-compatible format
 
 ---
 
@@ -111,26 +95,21 @@
 > Execute JS skills in a hidden WebView — the same pattern as Google AI Edge Gallery.
 
 ### Tasks
-- [ ] Install `react-native-webview`
-- [ ] Create `SkillSandbox` component (hidden WebView, zero UI)
-- [ ] Implement the execution protocol:
-  1. Load skill's `scripts/index.html` into hidden WebView
-  2. Call `window['ai_edge_gallery_get_result'](jsonParams)` via `injectJavaScript`
-  3. Receive result via `onMessage` / `postMessage` bridge
-  4. Return result to caller as Promise
-  5. Handle timeout (skill takes too long)
-  6. Handle errors (skill throws, network failure for fetch()-based skills)
-- [ ] Support skill return types:
-  - `{ result: "text" }` — plain text result
-  - `{ result: "text", image: { base64: "..." } }` — result with image
-  - `{ error: "message" }` — skill error
-- [ ] Add skill execution timeout (configurable, default 30s)
-- [ ] Add skill sandboxing — skills cannot access app storage, cookies, etc.
+- [x] `react-native-webview` already in peerDependencies
+- [x] Create `SkillSandbox` component (`src/SkillSandbox.tsx`) — hidden WebView, forwardRef/useImperativeHandle
+- [x] Implement execution protocol:
+  - Loads skill HTML into WebView with injected bridge script
+  - Calls `window['ai_edge_gallery_get_result'](params)` 
+  - Result returned via `ReactNativeWebView.postMessage` bridge
+  - Promise-based API: `execute(html, params, timeout)`
+- [x] Support skill return types: `{ result }`, `{ result, image }`, `{ error }`
+- [x] Skill execution timeout (configurable, default 30s)
+- [x] Sandboxing: `domStorageEnabled={false}`, `incognito` mode
 - [ ] Test with a simple inline skill (no file loading)
 
 ### Exit Criteria
-- Can execute a JS function in a hidden WebView, pass it JSON, get back a result
-- Errors and timeouts are handled gracefully
+- [x] Can execute a JS function in a hidden WebView, pass it JSON, get back a result
+- [x] Errors and timeouts are handled gracefully
 
 ---
 
@@ -139,22 +118,16 @@
 > Parse the model's output to detect when it wants to call a skill.
 
 ### Tasks
-- [ ] Define the function call format the model should output:
-  ```json
-  {"tool_call": {"name": "query_wikipedia", "parameters": {"query": "Oscars 2026 best picture"}}}
-  ```
-- [ ] Build `FunctionCallParser`:
-  - Detect if model output contains a tool_call JSON block
-  - Extract tool name and parameters
-  - Validate against registered skill's parameter schema
-  - Handle malformed output (model doesn't always produce valid JSON)
-  - Handle partial JSON in streaming (buffer until complete)
-- [ ] Add retry logic: if model produces invalid tool_call, re-prompt once with correction
+- [x] Primary: `validateToolCalls()` — reads llama.rn's auto-parsed `result.toolCalls`, validates against SkillRegistry
+- [x] Fallback: `extractToolCallsFromText()` — scans raw text for JSON blocks via brace-depth tracking
+  - Handles `{"tool_call": {...}}` and `{"name": "...", "arguments": {...}}` patterns
+- [x] `ParsedToolCall` type: name, parameters, skill reference, original tool call ID
 - [ ] Test with mock model outputs (valid calls, malformed calls, no calls)
 
 ### Exit Criteria
-- Parser reliably extracts tool calls from model output
-- Handles malformed JSON gracefully
+- [x] Parser validates tool calls from llama.rn's native parser
+- [x] Fallback scans raw text when native parser misses
+- [x] Handles malformed JSON gracefully
 
 ---
 
@@ -163,37 +136,19 @@
 > The main loop that ties model → parser → skill → model together.
 
 ### Tasks
-- [ ] Create `AgentOrchestrator` class — the core engine:
-  ```
-  User message
-    → Add to conversation history
-    → Generate system prompt (base + skill descriptions)
-    → Send to inference engine
-    → Parse output for tool calls
-    → If tool_call found:
-        → Execute skill via SkillSandbox
-        → Append skill result to conversation
-        → Re-invoke model with updated context
-        → Repeat (max 5 chained calls to prevent infinite loops)
-    → If no tool_call:
-        → Return final response to user
-  ```
-- [ ] Implement max-depth limit for chained skill calls (prevent infinite loops)
-- [ ] Add conversation history management:
-  - Append user messages, assistant messages, skill results
-  - Trim history when approaching context limit
-- [ ] Add event emitter for UI updates:
-  - `onModelThinking` — model is generating
-  - `onSkillCalled(skillName, params)` — skill invocation detected
-  - `onSkillResult(skillName, result)` — skill returned
-  - `onResponse(text)` — final response ready
-  - `onError(error)` — something broke
+- [x] Create `AgentOrchestrator` class (`src/AgentOrchestrator.ts`):
+  - `sendMessage(text, onEvent)` → full agent loop with tool execution
+  - Supports JS skills (via SkillExecutor callback) and native skills (direct execute)
+  - Immutable conversation history management
+- [x] Max-depth limit (default 5, configurable via `AgentConfig.maxChainDepth`)
+- [x] Event system via callback: `thinking`, `token`, `skill_called`, `skill_result`, `response`, `error`
+- [x] `setSkillExecutor()` — decouples orchestrator from React component tree
 - [ ] Test the full loop: user asks → model calls skill → skill returns → model answers
 
 ### Exit Criteria
-- Full agent loop works: question → skill call → answer
-- Events fire correctly for UI to show "Loading skill...", "Called skill...", etc.
-- Chained skill calls work (model calls skill A, then skill B based on A's result)
+- [x] Full agent loop built: inference → tool call → skill exec → re-invoke
+- [x] Events fire for UI updates
+- [ ] E2E test on device (needs demo skills + example app update)
 
 ---
 
@@ -222,15 +177,17 @@
     onSkillResult: (name, result) => {},
   });
   ```
-- [ ] Create `GemmaAgentProvider` context provider (wraps app, manages shared model instance)
-- [ ] Create `useModelDownload()` hook for download-only UI screens
-- [ ] Create `useSkillRegistry()` hook for dynamic skill management
-- [ ] Ensure all hooks are properly typed with TypeScript
+- [x] Create `GemmaAgentProvider` context provider (`src/GemmaAgentProvider.tsx`)
+  - Owns all SDK instances (ModelManager, InferenceEngine, SkillRegistry, AgentOrchestrator)
+  - Renders hidden SkillSandbox, wires executor via useLayoutEffect
+- [x] Create `useModelDownload()` hook (`src/useModelDownload.ts`)
+- [x] Create `useSkillRegistry()` hook (`src/useSkillRegistry.ts`)
+- [x] All hooks properly typed with TypeScript
 - [ ] Write JSDoc comments for every public API
 
 ### Exit Criteria
-- A developer can `npm install react-native-gemma-agent`, wrap their app in the Provider, call `useGemmaAgent()`, and have a working agent
-- TypeScript types are complete and accurate
+- [x] Developer wraps app in Provider, calls useGemmaAgent(), has working agent API
+- [x] TypeScript types are complete and accurate
 
 ---
 
@@ -239,29 +196,24 @@
 > Build 3 skills that showcase different capabilities.
 
 ### Skill 1: query_wikipedia
-- [ ] Create `skills/query_wikipedia/SKILL.md`
-- [ ] Create `skills/query_wikipedia/scripts/index.html`
-- [ ] Implements: receives search query → fetches Wikipedia API → extracts summary → returns text
+- [x] Created `skills/queryWikipedia.ts` — JS/WebView skill
+- [x] Fetches Wikipedia REST API `/page/summary/` with search API fallback
 - [ ] Test with various queries (people, events, places, concepts)
 
 ### Skill 2: calculator
-- [ ] Create `skills/calculator/SKILL.md`
-- [ ] Create `skills/calculator/scripts/index.html`
-- [ ] Implements: receives math expression → evaluates safely → returns result
-- [ ] Fully offline — no fetch() needed
+- [x] Created `skills/calculator.ts` — native skill (fully offline)
+- [x] Safe math eval: input sanitized to digits + operators only, then `Function` constructor
+- [x] Handles `^` → `**` exponentiation conversion
 - [ ] Test with basic arithmetic, unit conversions, percentages
 
 ### Skill 3: web_search
-- [ ] Create `skills/web_search/SKILL.md`
-- [ ] Create `skills/web_search/scripts/index.html`
-- [ ] Implements: receives query → fetches a free search API or DuckDuckGo → returns top results
+- [x] Created `skills/webSearch.ts` — JS/WebView skill
+- [x] Uses DuckDuckGo Instant Answer API (free, no API key)
 - [ ] Test with various queries
 
 ### Exit Criteria
-- All 3 skills work end-to-end through the agent loop
-- Wikipedia skill answers factual questions correctly
-- Calculator handles math the LLM would normally struggle with
-- Web search returns real search results
+- [x] All 3 skills built with proper SkillManifest format
+- [ ] E2E test through agent loop on device
 
 ---
 
@@ -270,31 +222,22 @@
 > A standalone app that uses the SDK — proves it works and provides LinkedIn demo material.
 
 ### Tasks
-- [ ] Create `example/` directory with a fresh RN app
-- [ ] Build chat UI screen:
-  - Message bubbles (user + agent)
-  - Skill status indicators ("Loaded skill query_wikipedia", "Called JS skill...")
-  - "Model on GPU" badge
-  - Typing indicator while model generates
-  - Token streaming (text appears word by word)
-- [ ] Build model download screen:
-  - Model size info
-  - Download progress bar
-  - Storage space check
-- [ ] Build skill browser screen:
-  - List installed skills with descriptions
-  - Toggle skills on/off
-  - Load skill from URL
-- [ ] Add onboarding flow:
-  - First launch → explain what the app does
-  - Prompt to download model
-  - Show pre-loaded skills
-- [ ] Test on physical Android device
+- [x] Rewrote `example/App.tsx` to use SDK hooks (GemmaAgentProvider, useGemmaAgent, useModelDownload)
+- [x] Chat bubble UI: user/assistant message bubbles, streaming text with green dot indicator
+- [x] Skill status: yellow "Running skill: X" badge with spinner during execution
+- [x] Metrics bar: load time, skill count, active skill
+- [x] Model controls: "Load Model" (finds local file), "Download" (from HuggingFace)
+- [x] Download progress bar
+- [x] Log viewer tab (skill calls, errors, timing info)
+- [x] Registered all 3 demo skills (calculator, wikipedia, web_search)
+- [x] Updated metro.config.js to resolve SDK source from parent directory
+- [x] Installed react-native-webview in example app
+- [ ] Test on Android emulator/device
 - [ ] Record demo video for LinkedIn
 
 ### Exit Criteria
-- App launches, downloads model, loads skills, and handles a full conversation with skill calls
-- Looks good enough for a demo video
+- [x] App uses SDK hooks, registers skills, shows chat with skill status
+- [ ] E2E test on device
 
 ---
 
@@ -303,32 +246,126 @@
 > Make it real — README, docs, GitHub, NPM prep.
 
 ### Tasks
-- [ ] Write `README.md`:
-  - What it does (one paragraph)
-  - Demo GIF/video
-  - Quick start (5 lines of code)
-  - Full API reference
-  - How to create custom skills
-  - Supported models
-  - Requirements (RN version, New Architecture, etc.)
-- [ ] Write `CONTRIBUTING.md`
-- [ ] Write `docs/CREATING_SKILLS.md` — guide for building custom skills
-- [ ] Add `LICENSE` (MIT)
-- [ ] Configure `package.json` for NPM publishing
-- [ ] Create GitHub repo, push everything
+- [x] Write `README.md` — quick start, API reference, custom skill guide, architecture, model setup, performance
+- [x] Add `LICENSE` (MIT)
+- [x] `package.json` already configured for NPM (main, module, types, files, peerDependencies)
+- [x] GitHub repo already created (shashankg-dev404/react-native-gemma-agent)
+- [ ] Commit and push all code
 - [ ] Tag v0.1.0 release
-- [ ] Create GitHub Discussions for community skill sharing
 - [ ] Draft LinkedIn launch post (see `LINKEDIN_CONTENT.md`)
 
 ### Exit Criteria
-- GitHub repo is public with clean README
-- `npm install react-native-gemma-agent` is ready (even if not published yet)
-- At least one LinkedIn post is drafted and ready
+- [x] README covers full API, quick start, custom skills
+- [ ] Code pushed to GitHub
+- [ ] At least one LinkedIn post drafted
 
 ---
 
-## Stretch Goals (Post-Sprint)
+## Phase 11: Skill Quality & Network Awareness
 
+> Clean up garbled data feeding into model context, improve web search, add network awareness.
+
+### Tasks
+- [x] **Strip LaTeX from Wikipedia skill** — Remove `$...$` delimiters and common LaTeX markup (`\displaystyle`, `{\text{...}}`, etc.) from Wikipedia API responses before returning to model. Garbled LaTeX wastes tokens and confuses output.
+- [x] **Swap web search to SearXNG** — Replace DuckDuckGo Instant Answer API (unreliable for broad queries) with a public SearXNG instance. DDG only returns pre-computed instant answers; SearXNG provides actual search results.
+- [x] **Add `requiresNetwork` flag to SkillManifest** — New optional boolean field. SDK checks device connectivity before executing skills with `requiresNetwork: true`. Returns clean error "No internet connection" instead of a timeout. Skills with `requiresNetwork: false` or unset skip the check.
+- [x] Update built-in skills: calculator (`requiresNetwork: false`), wikipedia (`requiresNetwork: true`), web_search (`requiresNetwork: true`)
+
+### Exit Criteria
+- [x] Wikipedia responses contain no LaTeX artifacts
+- [x] Web search returns actual results for broad queries
+- [x] Offline skill calls skip network skills with clear error message
+
+---
+
+## Phase 12: BM25 Skill Pre-filter (Opt-in)
+
+> Smart skill routing for developers with many skills. Opt-in via config flag.
+
+### Background (from research)
+With ~50 tools, LLMs maintain 84-95% accuracy. At ~200 tools, accuracy drops to 41-83%. Token cost explodes 50-100x with naive "load all tools." For our 4096-token context, each skill costs ~50-100 tokens. Practical limit is ~10-15 skills without filtering.
+
+### Approach
+BM25 (Best Matching 25) is a term frequency / inverse document frequency algorithm with length normalization. Pure math, no ML model, ~100 lines of TypeScript. Scores each skill's `name + description + parameter descriptions` against the user's query. Top-N skills sent to model.
+
+### Tasks
+- [x] Implement `BM25Scorer` class in `src/BM25Scorer.ts`:
+  - Build inverted index from skill descriptions on registration
+  - `score(query: string, skills: SkillManifest[])` → ranked skill list
+  - Tokenize by whitespace + lowercasing (simple, no stemming needed for MVP)
+- [x] Add `skillRouting` config to `AgentConfig`: `'all' | 'bm25'` (default: `'all'`)
+- [x] Add `maxToolsPerInvocation` config to `AgentConfig` (default: 5, only used with `bm25`)
+- [x] Wire into `AgentOrchestrator.sendMessage()`: when `bm25`, score skills against user query, pass top-N to `engine.generate()`
+- [x] Export `BM25Scorer` for developers who want standalone access
+- [x] Update `GemmaAgentProvider` to accept new config fields
+
+### API
+```typescript
+<GemmaAgentProvider
+  agentConfig={{
+    skillRouting: 'bm25',          // default: 'all'
+    maxToolsPerInvocation: 5,      // only used with 'bm25'
+  }}
+>
+```
+
+### Exit Criteria
+- [x] With `skillRouting: 'all'` — current behavior, all skills sent
+- [x] With `skillRouting: 'bm25'` — only top-N skills sent per query
+- [x] Unit tests: calculator ranked first for "what is 2+2", wikipedia first for "search Einstein"
+- [x] Zero overhead when disabled
+
+---
+
+## Phase 13: Context Usage API
+
+> Let developers monitor context window consumption.
+
+### Tasks
+- [x] Add `getContextUsage()` method to `InferenceEngine`:
+  - Returns `{ used: number, total: number, percent: number }` in tokens
+  - Uses last generation's prompt+predicted tokens as estimate
+- [x] Add `contextUsage` field to `UseGemmaAgentReturn` (from `useGemmaAgent()`)
+- [ ] Add `onContextWarning` callback to `AgentConfig` — fires when context usage exceeds threshold (default: 80%) _(deferred to v0.2)_
+- [ ] Expose in the example app's metrics bar _(deferred to v0.2)_
+
+### Exit Criteria
+- [x] Developer can query remaining context at any time
+- [ ] Warning fires before context fills up _(deferred to v0.2)_
+
+---
+
+## Phase 14: Unit & Integration Tests
+
+> Deterministic tests that run without the model. Validates SDK logic, not LLM quality.
+
+### Tier 1: Component Unit Tests
+- [x] `BM25Scorer`: ranks calculator first for math, wikipedia first for factual queries (11 tests)
+- [x] `FunctionCallParser`: extracts valid tool calls, handles malformed JSON, handles empty input (12 tests)
+- [x] `SkillRegistry`: validates skill manifests, rejects invalid skills, converts to tool definitions (10 tests)
+- [x] LaTeX stripping: removes `$...$`, `\displaystyle`, etc. (14 tests)
+- [x] `requiresNetwork` check: blocks network skills when offline (2 tests in orchestrator suite)
+
+### Tier 2: Mocked Trajectory Tests (mock `InferenceEngine.generate()`)
+- [x] Orchestrator: model calls tool → executes skill → feeds result back → model responds
+- [x] Orchestrator: skill fails → model gets error string → responds gracefully
+- [x] Orchestrator: max chain depth reached → stops and responds with fallback
+- [x] Orchestrator: no tool calls → returns direct response (no skill execution)
+- [x] Orchestrator: thinking text NOT stored in assistant message content
+- [x] Orchestrator: BM25 routing sends only top-N skills to engine (3 tests)
+
+### Exit Criteria
+- [x] All tests pass with `npx jest` (no device needed) — 60 tests, 5 suites
+- [x] Tests run in <5 seconds — ~2s
+
+---
+
+## Stretch Goals (Post v0.1.0)
+
+- [ ] **On-device knowledge base skill (v0.2)** — `local_notes` native skill that reads/writes markdown files on device. Agent saves answers locally, accumulates knowledge over time. No RAG needed at small scale — just inject index into system prompt. Inspired by Karpathy's "LLM Knowledge Bases" pattern, but fully private and on-device.
+- [ ] **Skill categories** (v0.2) — developer groups skills (`category: 'finance' | 'travel'`), SDK only loads active category into context. Zero runtime overhead, pairs with BM25 for larger skill sets.
+- [ ] **Semantic vector routing** (v0.3+) — lightweight on-device embedding model (all-MiniLM-L6, 23MB) for 97%+ tool selection accuracy. Research shows 99.6% token reduction with 97.1% hit rate at K=3.
+- [ ] **Eval harness in example app** (v0.2) — structured test runner that executes predefined queries, records skill selection accuracy, answer quality, latency. Manual "run on device" eval.
 - [ ] iOS support (pending LiteRT-LM Swift API stabilization)
 - [ ] TurboQuant KV cache integration (when llama.cpp merges it)
 - [ ] Multimodal vision skills (image input to model)

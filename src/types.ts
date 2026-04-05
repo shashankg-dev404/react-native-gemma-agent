@@ -81,8 +81,12 @@ export type CompletionTimings = {
 };
 
 export type CompletionResult = {
+  /** Raw text output (includes thinking + tool call tokens) */
   text: string;
+  /** Filtered content (thinking and tool call tokens removed) */
   content: string;
+  /** Model's chain-of-thought reasoning, if any */
+  reasoning: string | null;
   toolCalls: ToolCall[];
   timings: CompletionTimings;
   stoppedEos: boolean;
@@ -125,4 +129,69 @@ export type InferenceEngineConfig = {
   useMlock?: boolean;
   /** Number of GPU layers to offload (-1 = all) */
   gpuLayers?: number;
+};
+
+// --- Skill System Types ---
+
+export type SkillType = 'js' | 'native';
+
+export type SkillParameter = {
+  type: string;
+  description?: string;
+  enum?: string[];
+};
+
+export type SkillManifest = {
+  name: string;
+  description: string;
+  version: string;
+  type: SkillType;
+  parameters: Record<string, SkillParameter>;
+  requiredParameters?: string[];
+  /** HTML content for JS skills — loaded into hidden WebView */
+  html?: string;
+  /** Native execution function — for skills that run in RN context */
+  execute?: (params: Record<string, unknown>) => Promise<SkillResult>;
+  /** Instructions for the LLM on when/how to use this skill */
+  instructions?: string;
+  /** Whether this skill requires network access. SDK checks connectivity before execution. */
+  requiresNetwork?: boolean;
+};
+
+export type SkillResult = {
+  result?: string;
+  error?: string;
+  image?: { base64: string };
+};
+
+// --- Agent Types ---
+
+export type AgentEvent =
+  | { type: 'thinking' }
+  | { type: 'token'; token: string }
+  | { type: 'skill_called'; name: string; parameters: Record<string, unknown> }
+  | { type: 'skill_result'; name: string; result: SkillResult }
+  | { type: 'response'; text: string; reasoning: string | null }
+  | { type: 'error'; error: string };
+
+export type AgentConfig = {
+  /** Max chained skill calls before stopping (prevents infinite loops). Default: 5 */
+  maxChainDepth?: number;
+  /** Timeout for each skill execution in ms. Default: 30000 */
+  skillTimeout?: number;
+  /** Base system prompt prepended to all conversations */
+  systemPrompt?: string;
+  /** Skill routing strategy. 'all' sends every skill; 'bm25' pre-filters by query relevance. Default: 'all' */
+  skillRouting?: 'all' | 'bm25';
+  /** Max skills sent to the model per invocation (only used with 'bm25' routing). Default: 5 */
+  maxToolsPerInvocation?: number;
+};
+
+export type ContextUsage = {
+  /** Tokens used so far */
+  used: number;
+  /** Total context window size in tokens */
+  total: number;
+  /** Usage percentage (0-100) */
+  percent: number;
 };

@@ -1,6 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
@@ -9,60 +8,103 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
-  Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
 import {
-  initLlama,
-  releaseAllLlama,
-  type LlamaContext,
-  type TokenData,
-  type NativeCompletionResult,
-} from 'llama.rn';
-import RNFS from 'react-native-fs';
+  GemmaAgentProvider,
+  useGemmaAgent,
+  useModelDownload,
+  type ModelConfig,
+  type Message,
+  type AgentEvent,
+} from '../src';
+import { calculatorSkill } from '../skills/calculator';
+import { queryWikipediaSkill } from '../skills/queryWikipedia';
+import { webSearchSkill } from '../skills/webSearch';
+import { deviceLocationSkill } from '../skills/deviceLocation';
+import { readCalendarSkill } from '../skills/readCalendar';
+
+// --- Config ---
+
+const MODEL_CONFIG: ModelConfig = {
+  repoId: 'unsloth/gemma-4-E2B-it-GGUF',
+  filename: 'gemma-4-E2B-it-Q4_K_M.gguf',
+  expectedSize: 3_110_000_000,
+};
+
+const SYSTEM_PROMPT = `You are a helpful AI assistant running entirely on-device via Gemma 4. Answer concisely and accurately. When you need factual information, calculations, or current data, use the tools available to you.`;
+
+const ALL_SKILLS = [
+  calculatorSkill,
+  queryWikipediaSkill,
+  webSearchSkill,
+  deviceLocationSkill,
+  readCalendarSkill,
+];
+
+// --- App Entry ---
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <GemmaAgentProvider
+        model={MODEL_CONFIG}
+        skills={ALL_SKILLS}
+        systemPrompt={SYSTEM_PROMPT}
+      >
+        <ChatScreen />
+      </GemmaAgentProvider>
+    </SafeAreaProvider>
+  );
+}
+
+// --- Chat Screen ---
 
 type LogEntry = {
   timestamp: string;
   message: string;
-  type: 'info' | 'error' | 'success' | 'metric';
+  type: 'info' | 'error' | 'success' | 'skill';
 };
 
-type ModelStatus =
-  | 'idle'
-  | 'checking'
-  | 'loading'
-  | 'ready'
-  | 'generating'
-  | 'error';
+function ChatScreen() {
+  const {
+    sendMessage,
+    messages,
+    streamingText,
+    isProcessing,
+    isModelLoaded,
+    modelStatus,
+    activeSkill,
+    error,
+    loadModel,
+    unloadModel,
+    reset,
+  } = useGemmaAgent();
 
-type ActiveTab = 'response' | 'logs';
+  const {
+    download,
+    progress,
+    status: dlStatus,
+    checkModel,
+    setModelPath,
+  } = useModelDownload();
 
-const MODEL_FILENAME = 'gemma-4-E2B-it-Q4_K_M.gguf';
-
-function getTimestamp(): string {
-  return new Date().toLocaleTimeString('en-US', { hour12: false });
-}
-
-export default function App() {
-  const [status, setStatus] = useState<ModelStatus>('idle');
+  const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadProgress, setLoadProgress] = useState(0);
-  const [prompt, setPrompt] = useState('What is the capital of France?');
-  const [response, setResponse] = useState('');
-  const [activeTab, setActiveTab] = useState<ActiveTab>('response');
-  const [metrics, setMetrics] = useState<{
-    loadTimeMs?: number;
-    tokensPerSec?: number;
-    promptTokens?: number;
-    predictedTokens?: number;
-    gpu?: boolean;
-  }>({});
+  const [loadTimeMs, setLoadTimeMs] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<'chat' | 'logs'>('chat');
 
-  const contextRef = useRef<LlamaContext | null>(null);
+  const chatScrollRef = useRef<ScrollView>(null);
   const logScrollRef = useRef<ScrollView>(null);
 
   const addLog = useCallback(
     (message: string, type: LogEntry['type'] = 'info') => {
-      setLogs(prev => [...prev, { timestamp: getTimestamp(), message, type }]);
+      const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+      setLogs(prev => [...prev, { timestamp: ts, message, type }]);
       setTimeout(
         () => logScrollRef.current?.scrollToEnd({ animated: true }),
         100,
@@ -71,479 +113,352 @@ export default function App() {
     [],
   );
 
-  const modelPathRef = useRef<string>('');
+  // --- Model Loading ---
 
-  const getModelPath = (): string => {
-    return (
-      modelPathRef.current || `${RNFS.DocumentDirectoryPath}/${MODEL_FILENAME}`
+  const handleFindOrLoad = async () => {
+    try {
+      addLog('Searching for model on device...');
+      const found = await checkModel();
+      if (!found) {
+        // Try /data/local/tmp/ fallback (adb push path)
+        try {
+          await setModelPath(`/data/local/tmp/${MODEL_CONFIG.filename}`);
+          addLog('Model found at /data/local/tmp/', 'success');
+        } catch {
+          addLog('Model not found. Push via adb or tap Download.', 'error');
+          return;
+        }
+      } else {
+        addLog('Model found on device.', 'success');
+      }
+
+      addLog('Loading model into memory...');
+      setLoadProgress(0);
+      const time = await loadModel(pct => setLoadProgress(pct));
+      setLoadTimeMs(time);
+      addLog(`Model loaded in ${(time / 1000).toFixed(1)}s`, 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Load failed: ${msg}`, 'error');
+    }
+  };
+
+  const handleDownload = async () => {
+    try {
+      addLog('Starting model download...');
+      const path = await download();
+      addLog(`Downloaded to: ${path}`, 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Download failed: ${msg}`, 'error');
+    }
+  };
+
+  // --- Chat ---
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || isProcessing) return;
+
+    setInput('');
+    setActiveTab('chat');
+    addLog(`User: "${text}"`);
+
+    setTimeout(
+      () => chatScrollRef.current?.scrollToEnd({ animated: true }),
+      100,
+    );
+
+    try {
+      const response = await sendMessage(text, (event: AgentEvent) => {
+        switch (event.type) {
+          case 'skill_called':
+            addLog(
+              `Calling skill: ${event.name}(${JSON.stringify(
+                event.parameters,
+              )})`,
+              'skill',
+            );
+            break;
+          case 'skill_result':
+            addLog(
+              `Skill ${event.name} returned: ${
+                event.result.result?.slice(0, 100) ??
+                event.result.error ??
+                '(empty)'
+              }`,
+              'skill',
+            );
+            break;
+          case 'error':
+            addLog(`Error: ${event.error}`, 'error');
+            break;
+        }
+      });
+
+      addLog(`Assistant responded (${response.length} chars)`, 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Send failed: ${msg}`, 'error');
+    }
+
+    setTimeout(
+      () => chatScrollRef.current?.scrollToEnd({ animated: true }),
+      200,
     );
   };
 
-  const checkModel = async (): Promise<boolean> => {
-    const docPath = `${RNFS.DocumentDirectoryPath}/${MODEL_FILENAME}`;
-    if (await RNFS.exists(docPath)) {
-      modelPathRef.current = docPath;
-      const stat = await RNFS.stat(docPath);
-      addLog(
-        `Model found (documents): ${(Number(stat.size) / 1e9).toFixed(2)} GB`,
-        'success',
-      );
-      return true;
-    }
+  // --- Render ---
 
-    const tmpPath = `/data/local/tmp/${MODEL_FILENAME}`;
-    if (await RNFS.exists(tmpPath)) {
-      modelPathRef.current = tmpPath;
-      const stat = await RNFS.stat(tmpPath);
-      addLog(
-        `Model found (tmp): ${(Number(stat.size) / 1e9).toFixed(2)} GB`,
-        'success',
-      );
-      return true;
-    }
-
-    return false;
-  };
-
-  const handleLoadModel = async () => {
-    try {
-      setStatus('checking');
-      setActiveTab('logs');
-      addLog('Checking for model file...');
-
-      const modelExists = await checkModel();
-      if (!modelExists) {
-        setStatus('error');
-        addLog(
-          `Model not found at ${getModelPath()}. Push it via adb or download manually.`,
-          'error',
-        );
-        Alert.alert(
-          'Model Not Found',
-          `Please push the GGUF model to the device first.\n\nExpected: ${getModelPath()}`,
-        );
-        return;
-      }
-
-      setStatus('loading');
-      setLoadProgress(0);
-      addLog('Loading model into memory...');
-
-      const loadStart = Date.now();
-
-      const context = await initLlama(
-        {
-          model: getModelPath(),
-          n_ctx: 2048,
-          n_batch: 512,
-          n_threads: 4,
-          flash_attn_type: 'auto',
-          use_mlock: true,
-        },
-        (progress: number) => {
-          setLoadProgress(progress);
-          if (progress % 25 === 0 && progress > 0) {
-            addLog(`Loading: ${progress}%`);
-          }
-        },
-      );
-
-      const loadTimeMs = Date.now() - loadStart;
-      contextRef.current = context;
-
-      setMetrics(prev => ({
-        ...prev,
-        loadTimeMs,
-        gpu: context.gpu,
-      }));
-
-      addLog(`Model loaded in ${(loadTimeMs / 1000).toFixed(1)}s`, 'success');
-      addLog(`GPU offload: ${context.gpu ? 'YES' : 'NO'}`, 'metric');
-      if (!context.gpu && context.reasonNoGPU) {
-        addLog(`GPU reason: ${context.reasonNoGPU}`, 'info');
-      }
-
-      setStatus('ready');
-      addLog('Ready for inference. Type a prompt and tap Send.', 'success');
-    } catch (err: unknown) {
-      setStatus('error');
-      const message = err instanceof Error ? err.message : String(err);
-      addLog(`Load failed: ${message}`, 'error');
-    }
-  };
-
-  const handleSend = async () => {
-    if (!contextRef.current || !prompt.trim()) {
-      return;
-    }
-
-    try {
-      setStatus('generating');
-      setResponse('');
-      setActiveTab('response');
-      addLog(`Prompt: "${prompt}"`);
-
-      let accumulated = '';
-
-      const result: NativeCompletionResult =
-        await contextRef.current.completion(
-          {
-            messages: [
-              {
-                role: 'system',
-                content:
-                  'You are a helpful assistant. Answer directly and concisely.',
-              },
-              { role: 'user', content: prompt },
-            ],
-            n_predict: 512,
-            temperature: 0.7,
-            top_p: 0.9,
-            top_k: 40,
-            stop: ['<end_of_turn>', '<eos>'],
-          },
-          (data: TokenData) => {
-            const text = data.content ?? data.token;
-            if (text) {
-              accumulated += text;
-              setResponse(accumulated);
-            }
-          },
-        );
-
-      // content = answer only (no thinking), text = raw with thinking
-      setResponse(result.content || result.text);
-
-      const timings = result.timings;
-      setMetrics(prev => ({
-        ...prev,
-        tokensPerSec: timings.predicted_per_second,
-        promptTokens: timings.prompt_n,
-        predictedTokens: timings.predicted_n,
-      }));
-
-      addLog(
-        `Done: ${
-          timings.predicted_n
-        } tokens @ ${timings.predicted_per_second.toFixed(1)} tok/s`,
-        'success',
-      );
-      addLog(
-        `Prompt eval: ${timings.prompt_n} tokens in ${timings.prompt_ms.toFixed(
-          0,
-        )}ms (${timings.prompt_per_second.toFixed(1)} tok/s)`,
-        'metric',
-      );
-
-      if (result.tool_calls && result.tool_calls.length > 0) {
-        addLog(
-          `Tool calls detected: ${JSON.stringify(result.tool_calls)}`,
-          'metric',
-        );
-      }
-
-      setStatus('ready');
-    } catch (err: unknown) {
-      setStatus('ready');
-      const message = err instanceof Error ? err.message : String(err);
-      addLog(`Inference failed: ${message}`, 'error');
-    }
-  };
-
-  const handleRelease = async () => {
-    try {
-      await releaseAllLlama();
-      contextRef.current = null;
-      setStatus('idle');
-      setMetrics({});
-      setResponse('');
-      addLog('Model released', 'info');
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      addLog(`Release failed: ${message}`, 'error');
-    }
-  };
-
-  const handleTestTools = async () => {
-    if (!contextRef.current) {
-      return;
-    }
-
-    try {
-      setStatus('generating');
-      setResponse('');
-      setActiveTab('response');
-      addLog('Testing tool calls with get_weather tool...');
-
-      const tools = [
-        {
-          type: 'function' as const,
-          function: {
-            name: 'get_weather',
-            description: 'Get the current weather for a location',
-            parameters: {
-              type: 'object' as const,
-              properties: {
-                location: {
-                  type: 'string',
-                  description: 'City name',
-                },
-              },
-              required: ['location'],
-            },
-          },
-        },
-      ];
-
-      let accumulated = '';
-
-      const result: NativeCompletionResult =
-        await contextRef.current.completion(
-          {
-            messages: [
-              { role: 'user', content: 'What is the weather in Tokyo?' },
-            ],
-            n_predict: 256,
-            temperature: 0.1,
-            tools,
-            tool_choice: 'auto',
-          },
-          (data: TokenData) => {
-            if (data.token) {
-              accumulated += data.token;
-              setResponse(accumulated);
-            }
-            if (data.tool_calls && data.tool_calls.length > 0) {
-              addLog(
-                `Streaming tool_calls: ${JSON.stringify(data.tool_calls)}`,
-                'metric',
-              );
-            }
-          },
-        );
-
-      setResponse(result.text || result.content || '(no text)');
-
-      addLog(`Raw text: ${result.text}`, 'info');
-      addLog(`Content: ${result.content}`, 'info');
-
-      if (result.tool_calls && result.tool_calls.length > 0) {
-        addLog(
-          `TOOL CALLS PARSED: ${JSON.stringify(result.tool_calls, null, 2)}`,
-          'success',
-        );
-        for (const tc of result.tool_calls) {
-          addLog(
-            `  -> ${tc.function.name}(${tc.function.arguments})`,
-            'success',
-          );
-        }
-      } else {
-        addLog('No tool_calls in result', 'error');
-        addLog(`Full result keys: ${Object.keys(result).join(', ')}`, 'info');
-      }
-
-      setStatus('ready');
-    } catch (err: unknown) {
-      setStatus('ready');
-      const message = err instanceof Error ? err.message : String(err);
-      addLog(`Tool test failed: ${message}`, 'error');
-    }
-  };
-
-  const handleBench = async () => {
-    if (!contextRef.current) {
-      return;
-    }
-
-    try {
-      setActiveTab('logs');
-      addLog('Running benchmark (pp=512, tg=128)...');
-      const result = await contextRef.current.bench(512, 128, 1, 3);
-      addLog(
-        `Bench: PP ${result.speedPp?.toFixed(1) ?? '?'} tok/s | TG ${
-          result.speedTg?.toFixed(1) ?? '?'
-        } tok/s | Flash: ${result.flashAttn}`,
-        'metric',
-      );
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      addLog(`Bench failed: ${message}`, 'error');
-    }
-  };
-
-  const logColors: Record<LogEntry['type'], string> = {
-    info: '#888',
-    error: '#FF6B6B',
-    success: '#4CAF50',
-    metric: '#64B5F6',
-  };
+  const isDownloading = dlStatus === 'downloading';
+  const isLoading = modelStatus === 'loading';
+  const showChat = isModelLoaded;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Gemma 4 Spike</Text>
-        <Text style={styles.subtitle}>llama.rn 0.12.0-rc.4 | E2B Q4_K_M</Text>
-      </View>
-
-      {/* Metrics Bar */}
-      {metrics.loadTimeMs !== undefined && (
-        <View style={styles.metricsBar}>
-          <MetricBadge
-            label="Load"
-            value={`${(metrics.loadTimeMs / 1000).toFixed(1)}s`}
-          />
-          <MetricBadge
-            label="GPU"
-            value={metrics.gpu ? 'YES' : 'NO'}
-            color={metrics.gpu ? '#4CAF50' : '#FF6B6B'}
-          />
-          {metrics.tokensPerSec !== undefined && (
-            <MetricBadge
-              label="Speed"
-              value={`${metrics.tokensPerSec.toFixed(1)} t/s`}
-            />
-          )}
-          {metrics.predictedTokens !== undefined && (
-            <MetricBadge label="Tokens" value={`${metrics.predictedTokens}`} />
-          )}
+    <SafeAreaView
+      style={styles.container}
+      edges={['top', 'bottom', 'left', 'right']}
+    >
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoiding}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>Gemma Agent</Text>
+          <Text style={styles.subtitle}>
+            on-device AI | {ALL_SKILLS.length} skills |{' '}
+            {isModelLoaded ? 'ready' : modelStatus}
+          </Text>
         </View>
-      )}
 
-      {/* Controls */}
-      <View style={styles.controls}>
-        {status === 'idle' || status === 'error' ? (
-          <TouchableOpacity style={styles.btnPrimary} onPress={handleLoadModel}>
-            <Text style={styles.btnText}>Load Model</Text>
-          </TouchableOpacity>
-        ) : status === 'loading' || status === 'checking' ? (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator color="#fff" />
-            <Text style={styles.loadingText}>
-              {status === 'checking'
-                ? 'Checking...'
-                : `Loading ${loadProgress}%`}
-            </Text>
+        {/* Metrics Bar */}
+        {isModelLoaded && (
+          <View style={styles.metricsBar}>
+            {loadTimeMs !== null && (
+              <MetricBadge
+                label="Load"
+                value={`${(loadTimeMs / 1000).toFixed(1)}s`}
+              />
+            )}
+            <MetricBadge label="Skills" value={`${ALL_SKILLS.length}`} />
+            {activeSkill && (
+              <MetricBadge label="Active" value={activeSkill} color="#FFC107" />
+            )}
           </View>
-        ) : (
-          <View style={styles.readyControls}>
-            <TouchableOpacity style={styles.btnDanger} onPress={handleRelease}>
-              <Text style={styles.btnText}>Unload</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.btnSecondary} onPress={handleBench}>
-              <Text style={styles.btnText}>Bench</Text>
+        )}
+
+        {/* Model Controls (when not loaded) */}
+        {!showChat && (
+          <View style={styles.controls}>
+            {isDownloading && progress ? (
+              <View style={styles.progressContainer}>
+                <Text style={styles.progressText}>
+                  Downloading... {progress.percent}%
+                </Text>
+                <View style={styles.progressBar}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${progress.percent}%` },
+                    ]}
+                  />
+                </View>
+              </View>
+            ) : isLoading ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color="#fff" />
+                <Text style={styles.loadingText}>
+                  Loading model... {loadProgress}%
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={styles.btnPrimary}
+                  onPress={handleFindOrLoad}
+                >
+                  <Text style={styles.btnText}>Load Model</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.btnSecondary}
+                  onPress={handleDownload}
+                >
+                  <Text style={styles.btnText}>Download</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Ready controls */}
+        {showChat && (
+          <View style={styles.readyRow}>
+            <TouchableOpacity
+              style={styles.btnSmall}
+              onPress={() => {
+                reset();
+                addLog('Conversation reset', 'info');
+              }}
+            >
+              <Text style={styles.btnSmallText}>Clear Chat</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.btnSecondary, { backgroundColor: '#7B1FA2' }]}
-              onPress={handleTestTools}
+              style={[styles.btnSmall, styles.btnSmallDanger]}
+              onPress={async () => {
+                await unloadModel();
+                setLoadTimeMs(null);
+                addLog('Model unloaded', 'info');
+              }}
             >
-              <Text style={styles.btnText}>Tools</Text>
+              <Text style={styles.btnSmallText}>Unload</Text>
             </TouchableOpacity>
           </View>
         )}
-      </View>
 
-      {/* Prompt Input */}
-      {(status === 'ready' || status === 'generating') && (
-        <View style={styles.promptRow}>
-          <TextInput
-            style={styles.input}
-            value={prompt}
-            onChangeText={setPrompt}
-            placeholder="Enter prompt..."
-            placeholderTextColor="#666"
-            multiline
-            editable={status !== 'generating'}
-          />
+        {/* Tab Bar */}
+        <View style={styles.tabBar}>
           <TouchableOpacity
-            style={[
-              styles.btnSend,
-              status === 'generating' && styles.btnDisabled,
-            ]}
-            onPress={handleSend}
-            disabled={status === 'generating'}
+            style={[styles.tab, activeTab === 'chat' && styles.tabActive]}
+            onPress={() => setActiveTab('chat')}
           >
-            {status === 'generating' ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Text style={styles.btnText}>Send</Text>
-            )}
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'chat' && styles.tabTextActive,
+              ]}
+            >
+              Chat
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'logs' && styles.tabActive]}
+            onPress={() => setActiveTab('logs')}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'logs' && styles.tabTextActive,
+              ]}
+            >
+              Logs ({logs.length})
+            </Text>
           </TouchableOpacity>
         </View>
-      )}
 
-      {/* Tab Bar */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'response' && styles.tabActive]}
-          onPress={() => setActiveTab('response')}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === 'response' && styles.tabTextActive,
-            ]}
-          >
-            Response
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'logs' && styles.tabActive]}
-          onPress={() => setActiveTab('logs')}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === 'logs' && styles.tabTextActive,
-            ]}
-          >
-            Logs ({logs.length})
-          </Text>
-        </TouchableOpacity>
-      </View>
+        {/* Tab Content */}
+        <View style={styles.tabContent}>
+          {activeTab === 'chat' ? (
+            <ScrollView
+              ref={chatScrollRef}
+              style={styles.chatScroll}
+              contentContainerStyle={styles.chatScrollInner}
+            >
+              {messages.length === 0 && !streamingText && (
+                <Text style={styles.placeholder}>
+                  {showChat
+                    ? 'Ask anything. Try "What is 234 * 567?" or "Search Wikipedia for quantum computing"'
+                    : 'Load the model to start chatting.'}
+                </Text>
+              )}
+              {messages
+                .filter(
+                  m =>
+                    m.role === 'user' ||
+                    (m.role === 'assistant' && !m.tool_calls?.length),
+                )
+                .map((msg, i) => (
+                  <MessageBubble key={i} message={msg} />
+                ))}
+              {streamingText.length > 0 && (
+                <View style={[styles.bubble, styles.bubbleAssistant]}>
+                  <Text style={styles.bubbleText}>{streamingText}</Text>
+                  <View style={styles.streamingDot} />
+                </View>
+              )}
+              {activeSkill && (
+                <View style={styles.skillBadge}>
+                  <ActivityIndicator color="#FFC107" size="small" />
+                  <Text style={styles.skillBadgeText}>
+                    Running skill: {activeSkill}
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+          ) : (
+            <ScrollView
+              ref={logScrollRef}
+              style={styles.chatScroll}
+              contentContainerStyle={styles.chatScrollInner}
+            >
+              {logs.map((log, i) => (
+                <Text
+                  key={i}
+                  style={[styles.logLine, { color: LOG_COLORS[log.type] }]}
+                >
+                  [{log.timestamp}] {log.message}
+                </Text>
+              ))}
+              {logs.length === 0 && (
+                <Text style={styles.placeholder}>No logs yet.</Text>
+              )}
+            </ScrollView>
+          )}
+        </View>
 
-      {/* Tab Content */}
-      <View style={styles.tabContent}>
-        {activeTab === 'response' ? (
-          <ScrollView
-            style={styles.contentScroll}
-            contentContainerStyle={styles.contentScrollInner}
-          >
-            {response.length > 0 ? (
-              <Text style={styles.responseText}>{response}</Text>
-            ) : (
-              <Text style={styles.placeholderText}>
-                {status === 'generating'
-                  ? 'Generating...'
-                  : status === 'ready'
-                  ? 'Send a prompt to see the response here.'
-                  : 'Load the model first.'}
-              </Text>
-            )}
-          </ScrollView>
-        ) : (
-          <ScrollView
-            ref={logScrollRef}
-            style={styles.contentScroll}
-            contentContainerStyle={styles.contentScrollInner}
-          >
-            {logs.map((log, i) => (
-              <Text
-                key={i}
-                style={[styles.logLine, { color: logColors[log.type] }]}
-              >
-                [{log.timestamp}] {log.message}
-              </Text>
-            ))}
-            {logs.length === 0 && (
-              <Text style={styles.placeholderText}>
-                Tap "Load Model" to start.
-              </Text>
-            )}
-          </ScrollView>
+        {/* Error */}
+        {error && (
+          <View style={styles.errorBar}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
         )}
-      </View>
+
+        {/* Input */}
+        {showChat && (
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.input}
+              value={input}
+              onChangeText={setInput}
+              placeholder="Ask something..."
+              placeholderTextColor="#666"
+              multiline
+              editable={!isProcessing}
+              onSubmitEditing={handleSend}
+            />
+            <TouchableOpacity
+              style={[styles.btnSend, isProcessing && styles.btnDisabled]}
+              onPress={handleSend}
+              disabled={isProcessing}
+            >
+              {isProcessing ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.btnText}>Send</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+// --- Components ---
+
+function MessageBubble({ message }: { message: Message }) {
+  const isUser = message.role === 'user';
+  return (
+    <View
+      style={[
+        styles.bubble,
+        isUser ? styles.bubbleUser : styles.bubbleAssistant,
+      ]}
+    >
+      <Text style={styles.bubbleRole}>{isUser ? 'You' : 'Gemma'}</Text>
+      <Text style={styles.bubbleText}>{message.content}</Text>
+    </View>
   );
 }
 
@@ -564,16 +479,26 @@ function MetricBadge({
   );
 }
 
+const LOG_COLORS: Record<LogEntry['type'], string> = {
+  info: '#888',
+  error: '#FF6B6B',
+  success: '#4CAF50',
+  skill: '#FFC107',
+};
+
+// --- Styles ---
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#1a1a2e',
-    paddingTop: StatusBar.currentHeight ?? 0,
-    paddingBottom: 24,
+    paddingBottom: 12,
+  },
+  keyboardAvoiding: {
+    flex: 1,
   },
   header: {
     paddingHorizontal: 16,
-    paddingTop: 12,
     paddingBottom: 8,
   },
   title: {
@@ -589,60 +514,47 @@ const styles = StyleSheet.create({
   metricsBar: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    gap: 12,
+    paddingVertical: 6,
+    gap: 10,
   },
   badge: {
     backgroundColor: '#16213e',
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     alignItems: 'center',
   },
   badgeLabel: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#888',
     textTransform: 'uppercase',
   },
   badgeValue: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#64B5F6',
   },
   controls: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 12,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
   },
   btnPrimary: {
+    flex: 1,
     backgroundColor: '#4CAF50',
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
   },
   btnSecondary: {
+    flex: 1,
     backgroundColor: '#1565C0',
     borderRadius: 8,
     paddingVertical: 14,
-    paddingHorizontal: 20,
     alignItems: 'center',
-  },
-  btnDanger: {
-    backgroundColor: '#c62828',
-    borderRadius: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-  },
-  btnSend: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnDisabled: {
-    backgroundColor: '#555',
   },
   btnText: {
     color: '#fff',
@@ -660,25 +572,44 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
   },
-  readyControls: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  promptRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+  progressContainer: {
     gap: 8,
   },
-  input: {
-    flex: 1,
-    backgroundColor: '#16213e',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  progressText: {
     color: '#fff',
     fontSize: 14,
-    maxHeight: 100,
+    textAlign: 'center',
+  },
+  progressBar: {
+    height: 6,
+    backgroundColor: '#16213e',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#4CAF50',
+    borderRadius: 3,
+  },
+  readyRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+    gap: 8,
+  },
+  btnSmall: {
+    backgroundColor: '#16213e',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  btnSmallDanger: {
+    backgroundColor: '#4a1515',
+  },
+  btnSmallText: {
+    color: '#aaa',
+    fontSize: 12,
+    fontWeight: '500',
   },
   tabBar: {
     flexDirection: 'row',
@@ -716,22 +647,104 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 8,
     overflow: 'hidden',
   },
-  contentScroll: {
+  chatScroll: {
     flex: 1,
     padding: 12,
   },
-  contentScrollInner: {
-    paddingBottom: 60,
+  chatScrollInner: {
+    paddingBottom: 20,
+    gap: 10,
   },
-  responseText: {
-    color: '#E0E0E0',
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  placeholderText: {
+  placeholder: {
     color: '#555',
     fontSize: 14,
     fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 40,
+    paddingHorizontal: 24,
+  },
+  bubble: {
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    maxWidth: '85%',
+  },
+  bubbleUser: {
+    backgroundColor: '#1565C0',
+    alignSelf: 'flex-end',
+  },
+  bubbleAssistant: {
+    backgroundColor: '#16213e',
+    alignSelf: 'flex-start',
+  },
+  bubbleRole: {
+    fontSize: 10,
+    color: '#888',
+    fontWeight: '600',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+  },
+  bubbleText: {
+    color: '#E0E0E0',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  streamingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#4CAF50',
+    marginTop: 4,
+  },
+  skillBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#2a2200',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 6,
+  },
+  skillBadgeText: {
+    color: '#FFC107',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  errorBar: {
+    backgroundColor: '#4a1515',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  errorText: {
+    color: '#FF6B6B',
+    fontSize: 12,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    padding: 12,
+    gap: 8,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: '#16213e',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#fff',
+    fontSize: 14,
+    maxHeight: 100,
+  },
+  btnSend: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnDisabled: {
+    backgroundColor: '#555',
   },
   logLine: {
     fontSize: 11,
