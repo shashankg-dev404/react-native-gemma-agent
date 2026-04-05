@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+lib/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Model files (too large for git)
+*.gguf
+*.bin
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# LinkedIn drafts (personal content, not for repo)
+docs/LINKEDIN_CONTENT.md

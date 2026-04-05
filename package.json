@@ -1,0 +1,46 @@
+{
+  "name": "react-native-gemma-agent",
+  "version": "0.1.0",
+  "description": "React Native SDK for on-device AI agents powered by Google Gemma 4",
+  "main": "lib/commonjs/index.js",
+  "module": "lib/module/index.js",
+  "types": "lib/typescript/index.d.ts",
+  "react-native": "src/index.ts",
+  "source": "src/index.ts",
+  "files": [
+    "src",
+    "lib",
+    "skills",
+    "!**/__tests__"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "react-native",
+    "gemma",
+    "on-device-ai",
+    "llm",
+    "agent",
+    "skills",
+    "llama.rn"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shashankg-dev404/react-native-gemma-agent"
+  },
+  "author": "Shashank Gupta",
+  "license": "MIT",
+  "peerDependencies": {
+    "llama.rn": ">=0.12.0-rc.3",
+    "react": ">=18.0.0",
+    "react-native": ">=0.76.0",
+    "react-native-fs": ">=2.20.0",
+    "react-native-webview": ">=13.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
