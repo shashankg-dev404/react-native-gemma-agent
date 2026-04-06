@@ -292,24 +292,39 @@ FunctionCallParser
 
 ```
 AgentOrchestrator
-├── Depends on: InferenceEngine, SkillRegistry, SkillSandbox, FunctionCallParser
-├── sendMessage(text: string) → AsyncGenerator<AgentEvent>
-│   └── Yields events: thinking | skill_called | skill_result | token | complete | error
+├── Depends on: InferenceEngine, SkillRegistry, SkillSandbox, FunctionCallParser, BM25Scorer
+├── sendMessage(text: string, onEvent?) → Promise<string>
+│   └── Fires events: thinking | skill_called | skill_result | token | response | error
 ├── conversationHistory: Message[]
 ├── config:
 │   ├── maxChainDepth: number (default 5)
 │   ├── skillTimeout: number (default 30000ms)
-│   └── maxContextTokens: number (default 8192)
+│   ├── skillRouting: 'all' | 'bm25' (default 'all')
+│   └── maxToolsPerInvocation: number (default 5, only with 'bm25')
+├── Network awareness:
+│   └── checkConnectivity() — HEAD request to google.com/generate_204 (3s timeout)
+│       Skills with requiresNetwork: true are blocked offline with clean error
+├── BM25 routing:
+│   └── getToolsForQuery(query) — scores skills against user query, sends top-N
 ├── reset() → void (clear conversation)
-└── getConversation() → Message[]
-
-Message types:
-├── { role: 'user', content: string }
-├── { role: 'assistant', content: string }
-├── { role: 'skill_call', skill: string, parameters: object }
-├── { role: 'skill_result', skill: string, result: string }
-└── { role: 'system', content: string }
+└── getConversation() → ReadonlyArray<Message>
 ```
+
+### 8. BM25Scorer
+
+**Type**: Class
+**Responsibility**: Pre-filter skills by relevance to user query. Opt-in via `skillRouting: 'bm25'`.
+
+```
+BM25Scorer
+├── buildIndex(skills: SkillManifest[]) — tokenizes name+description+parameters+instructions
+├── score(query: string) → Array<{ skill, score }> — ranked by BM25 score
+├── topN(query: string, n: number) → top N skills
+├── Parameters: k1=1.5, b=0.75
+└── Tokenizer: lowercase + strip non-alphanumeric + filter tokens < 2 chars
+```
+
+Pure math, ~100 lines, zero overhead when disabled.
 
 ---
 
@@ -434,13 +449,32 @@ Available:                  6,144 MB ✓
 
 ---
 
+## Built-in Skills (v0.1.0)
+
+| Skill | Type | Network | Source |
+|---|---|---|---|
+| `calculator` | native | No | `skills/calculator.ts` |
+| `query_wikipedia` | js/WebView | Yes | `skills/queryWikipedia.ts` — LaTeX stripped |
+| `web_search` | js/WebView | Yes | `skills/webSearch.ts` — SearXNG with 3 fallback instances |
+| `device_location` | native | No | `skills/deviceLocation.ts` — GPS + offline city lookup (60 cities) |
+| `read_calendar` | native | No | `skills/readCalendar.ts` — device calendar events |
+
+## Context Usage API
+
+```
+InferenceEngine.getContextUsage() → { used: number, total: number, percent: number }
+```
+
+Tracks prompt + predicted tokens from last generation vs configured context size. Exposed via `useGemmaAgent().contextUsage`.
+
 ## Future Architecture (Post-Sprint)
 
 ```
 v0.2: TurboQuant KV cache (6x longer conversations)
+v0.2: On-device knowledge base skill, skill categories
 v0.3: Multimodal input (camera → model → skill)
 v0.4: iOS support
 v0.5: Skill marketplace (browse/install community skills)
 v0.6: Multiple model support (Gemma 4 E4B, Phi-4, Qwen)
-v1.0: Stable API, NPM publish, Expo plugin
+v1.0: Stable API, Expo plugin
 ```

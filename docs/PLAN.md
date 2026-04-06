@@ -250,13 +250,16 @@
 - [x] Add `LICENSE` (MIT)
 - [x] `package.json` already configured for NPM (main, module, types, files, peerDependencies)
 - [x] GitHub repo already created (shashankg-dev404/react-native-gemma-agent)
-- [ ] Commit and push all code
-- [ ] Tag v0.1.0 release
+- [x] Commit and push all code
+- [x] Tag v0.1.0 release
+- [x] Published to npm: `npm install react-native-gemma-agent`
+- [x] Repo made public
 - [ ] Draft LinkedIn launch post (see `LINKEDIN_CONTENT.md`)
 
 ### Exit Criteria
 - [x] README covers full API, quick start, custom skills
-- [ ] Code pushed to GitHub
+- [x] Code pushed to GitHub
+- [x] Published on npm as v0.1.0
 - [ ] At least one LinkedIn post drafted
 
 ---

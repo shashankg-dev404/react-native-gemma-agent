@@ -290,6 +290,87 @@
 
 ---
 
+## Phase 11: Skill Quality & Network Awareness
+
+### TC-11.1: Wikipedia — LaTeX Stripped
+**Precondition**: Model loaded, internet connected
+**Steps**: Type "Look up Albert Einstein on Wikipedia"
+**Expected**: Response contains facts, no `$...$` delimiters, no `\displaystyle`, no raw LaTeX commands, no leftover `{}`
+
+### TC-11.2: Web Search — Broad Query (SearXNG)
+**Precondition**: Model loaded, internet connected
+**Steps**: Type "Search the web for latest React Native news"
+**Expected**: Web search skill called, returns actual results with titles/URLs/snippets (not "No direct results found")
+
+### TC-11.3: Network Check — Offline Blocks Network Skills
+**Precondition**: Model loaded, airplane mode ON
+**Steps**: Type "Search Wikipedia for quantum physics"
+**Expected**: Tool result returns "No internet connection" within ~3s (no 30s timeout wait). Model responds gracefully.
+
+### TC-11.4: Network Check — Offline Allows Calculator
+**Precondition**: Model loaded, airplane mode ON
+**Steps**: Type "What is 847 * 23?"
+**Expected**: Calculator executes normally, correct answer (19,481), no connectivity error.
+
+---
+
+## Phase 11b: GPS & Calendar Skills
+
+### TC-11b.1: GPS — Returns Location with City Name
+**Precondition**: Model loaded, GPS enabled
+**Steps**: Type "Where am I right now?"
+**Expected**: Device location skill called. Response includes city name (e.g., "Jodhpur, Rajasthan, India"), coordinates, accuracy, altitude. All fields present.
+
+### TC-11b.2: GPS — Works Offline
+**Precondition**: Model loaded, airplane mode ON, GPS enabled
+**Steps**: Type "Where am I?"
+**Expected**: GPS still returns coordinates + city name (offline city database, no internet needed).
+
+### TC-11b.3: Calendar — Returns Today's Events
+**Precondition**: Model loaded, calendar has events for today
+**Steps**: Type "What's on my calendar today?"
+**Expected**: Calendar skill called. Response lists events with times, titles, and locations. Events sorted by start time.
+
+### TC-11b.4: Calendar — No Events
+**Precondition**: Model loaded, calendar empty for today
+**Steps**: Type "What's on my calendar today?"
+**Expected**: Response says no events found.
+
+---
+
+## Phase 12: BM25 Skill Routing
+
+> To test: set `agentConfig={{ skillRouting: 'bm25', maxToolsPerInvocation: 1 }}` in App.tsx
+
+### TC-12.1: BM25 — Math Routes to Calculator
+**Precondition**: BM25 enabled, maxToolsPerInvocation: 1
+**Steps**: Type "Calculate 15% of 200"
+**Expected**: Calculator skill called, correct answer (30). Log shows only 1 tool sent to model.
+
+### TC-12.2: BM25 — Factual Routes to Wikipedia
+**Precondition**: BM25 enabled, maxToolsPerInvocation: 1
+**Steps**: Type "Search Wikipedia for the Eiffel Tower"
+**Expected**: Wikipedia skill called (not web_search or calculator).
+
+---
+
+## Phase 13: Context Usage API
+
+### TC-13.1: Context Usage Updates After Message
+**Precondition**: Model loaded
+**Steps**: Send "Hello", then send a longer message. Check contextUsage after each.
+**Expected**: `used` increases after each turn, `total` matches context size (4096), `percent` grows progressively.
+
+---
+
+## Phase 14: Unit Tests
+
+### TC-14.1: All Tests Pass
+**Steps**: Run `npm test` in SDK root
+**Expected**: 60 tests pass across 5 suites, runtime under 5 seconds, no device needed.
+
+---
+
 ## Regression Tests (Run Before Every Release)
 
 | # | Test | Phase |
@@ -297,10 +378,15 @@
 | R1 | Model downloads and loads | 1 |
 | R2 | Basic inference works | 0 |
 | R3 | Multi-turn conversation | 0 |
-| R4 | Wikipedia skill works | 4-8 |
-| R5 | Calculator skill works offline | 4-8 |
-| R6 | Skill timeout handled | 4 |
+| R4 | Wikipedia skill works — no LaTeX | 4-8, 11 |
+| R5 | Calculator skill works offline | 4-8, 11 |
+| R6 | Network check returns clean error offline | 4, 11 |
 | R7 | No-skill conversation works | 5 |
 | R8 | Chained skill calls work | 5 |
 | R9 | App survives backgrounding | 9 |
 | R10 | Chat UI streams tokens | 9 |
+| R11 | Web search returns real results (SearXNG) | 11 |
+| R12 | Offline blocks network skills, allows calculator | 11 |
+| R13 | GPS returns city name + coordinates | 11b |
+| R14 | Calendar returns device events | 11b |
+| R15 | `npm test` passes (60 tests) | 14 |

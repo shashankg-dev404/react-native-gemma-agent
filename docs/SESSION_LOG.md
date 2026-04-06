@@ -465,14 +465,44 @@
 - `skills/calculator.ts` — requiresNetwork: false
 - `package.json` — test script, jest/ts-jest devDependencies
 
+27. **GPS & Calendar Native Skills** — Built two new device skills for demo video:
+   - `skills/deviceLocation.ts` (v1.2.0): GPS coordinates via `@react-native-community/geolocation` + offline city lookup (60 cities, haversine nearest-match within 50km). Returns "Location: Jodhpur, Rajasthan, India" + coordinates + accuracy + altitude. `requiresNetwork: false`.
+   - `skills/readCalendar.ts` (v1.0.0): Reads device calendar events via `react-native-calendar-events`. Returns sorted events with time, title, location. `requiresNetwork: false`.
+   - Added `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`, `READ_CALENDAR` permissions to AndroidManifest.xml
+   - Registered both in `example/App.tsx` (5 skills total)
+
+28. **Metro Config Fix** — Added `blockList` to exclude SDK root's `node_modules` from metro resolution. The SDK's jest/ts-jest dev dependencies were confusing metro's module resolution, causing `PlatformConstants` TurboModule error and `GemmaAgentProvider` undefined import.
+
+29. **TypeScript Fix** — Added `@types/react` and `@types/react-native` to SDK dev dependencies. `npm run typecheck` now passes clean (0 errors).
+
+30. **Device Testing & Demo Video** — Shashank tested all 5 skills on physical Android device:
+   - Wikipedia: Working, no LaTeX artifacts (stripping works)
+   - Web search: Working with SearXNG (real results for broad queries)
+   - Calculator: Working offline
+   - GPS: Working offline with city name "Jodhpur, Rajasthan, India"
+   - Calendar: Working offline with device events
+   - Demo video recorded for LinkedIn
+
+31. **Published v0.1.0**:
+   - GitHub repo made public: `github.com/shashankg-dev404/react-native-gemma-agent`
+   - Git tag `v0.1.0` created and pushed
+   - Published to npm: `npm install react-native-gemma-agent`
+
+### Files Created
+- `skills/deviceLocation.ts` — GPS skill with offline city database
+- `skills/readCalendar.ts` — Calendar reader skill
+
+### Files Modified
+- `example/App.tsx` — registered GPS + calendar skills
+- `example/android/app/src/main/AndroidManifest.xml` — location + calendar permissions
+- `example/package.json` — added geolocation + calendar-events dependencies
+- `example/metro.config.js` — blockList for SDK node_modules
+- `package.json` — @types/react, @types/react-native devDependencies
+- `README.md` — added GPS/calendar to built-in skills table, updated roadmap
+- `docs/PLAN.md` — Phase 10 checked off (pushed, tagged, published)
+
 ---
 
-## Next Session — What To Pick Up
+## v0.1.0 Shipped
 
-### Ready for Device Testing
-1. Build and test on Android: `cd example && npx react-native run-android`
-2. Test Wikipedia skill — verify no LaTeX artifacts in responses
-3. Test web search — verify SearXNG returns real results for broad queries
-4. Test offline: enable airplane mode, try calculator (should work), try wikipedia (should get "No internet" error)
-5. Test BM25 routing: would need to enable via config change in App.tsx
-6. Commit and push all code, tag v0.1.0
+All planned phases complete. SDK published on npm and GitHub.
