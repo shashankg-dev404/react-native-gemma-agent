@@ -1,10 +1,9 @@
 {
   "name": "react-native-gemma-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "React Native SDK for on-device AI agents powered by Google Gemma 4",
-  "main": "lib/commonjs/index.js",
-  "module": "lib/module/index.js",
-  "types": "lib/typescript/index.d.ts",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "react-native": "src/index.ts",
   "source": "src/index.ts",
   "files": [
@@ -15,6 +14,7 @@
   ],
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
+    "prepublishOnly": "npm run build",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "test": "jest"
