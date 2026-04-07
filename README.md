@@ -2,6 +2,10 @@
 
 The first React Native SDK for building **on-device AI agents** powered by Google's Gemma 4. Run a complete agent loop — inference, tool calling, and skill execution — entirely on the user's phone with zero cloud dependency.
 
+## Demo
+
+https://github.com/user-attachments/assets/576b1419-78d0-43cf-a36a-04a4ba9e5a05
+
 ## Why This Exists
 
 Every major AI framework (LangChain, CrewAI, AutoGen) assumes a cloud LLM. But mobile apps need agents that work **offline**, respect **privacy**, and cost **zero per inference**. This SDK brings the agentic pattern — model thinks, picks a tool, executes it, responds — entirely on-device using Gemma 4's native function calling.
