@@ -6,6 +6,7 @@ export const queryWikipediaSkill: SkillManifest = {
   version: '1.1.0',
   type: 'js',
   requiresNetwork: true,
+  category: 'research',
   parameters: {
     query: {
       type: 'string',

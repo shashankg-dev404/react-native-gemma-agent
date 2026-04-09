@@ -33,12 +33,51 @@ export class SkillRegistry {
   }
 
   /**
+   * Returns skills matching the given category.
+   */
+  getSkillsByCategory(category: string): SkillManifest[] {
+    return this.getSkills().filter(
+      (s) => (s.category ?? 'uncategorized') === category,
+    );
+  }
+
+  /**
+   * Returns all unique category names across registered skills.
+   * Skills without a category appear as 'uncategorized'.
+   */
+  getCategories(): string[] {
+    const cats = new Set<string>();
+    for (const skill of this.skills.values()) {
+      cats.add(skill.category ?? 'uncategorized');
+    }
+    return Array.from(cats);
+  }
+
+  /**
+   * Filter skills by active categories.
+   * When activeCategories is undefined/empty, returns all skills (no filtering).
+   * Uncategorized skills are included if 'uncategorized' is in the list.
+   */
+  getSkillsForCategories(activeCategories?: string[]): SkillManifest[] {
+    if (!activeCategories || activeCategories.length === 0) {
+      return this.getSkills();
+    }
+    const allowed = new Set(activeCategories);
+    return this.getSkills().filter((s) =>
+      allowed.has(s.category ?? 'uncategorized'),
+    );
+  }
+
+  /**
    * Convert registered skills to OpenAI-compatible tool definitions.
    * Pass these to InferenceEngine.generate() as the `tools` parameter —
    * llama.rn handles the rest via Jinja templates + Gemma 4 chat format.
+   *
+   * When activeCategories is provided, only skills in those categories are included.
    */
-  toToolDefinitions(): ToolDefinition[] {
-    return this.getSkills().map(skill => ({
+  toToolDefinitions(activeCategories?: string[]): ToolDefinition[] {
+    const skills = this.getSkillsForCategories(activeCategories);
+    return skills.map(skill => ({
       type: 'function' as const,
       function: {
         name: skill.name,

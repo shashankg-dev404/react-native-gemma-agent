@@ -24,6 +24,10 @@ export type UseGemmaAgentReturn = {
   error: string | null;
   /** Current context window usage (updated after each generation) */
   contextUsage: ContextUsage;
+  /** Currently active skill categories (undefined = all categories) */
+  activeCategories: string[] | undefined;
+  /** Set which skill categories are active. Pass undefined to include all. */
+  setActiveCategories: (categories: string[] | undefined) => void;
   /** Load the model into memory. Must be downloaded first. */
   loadModel: (onProgress?: (percent: number) => void) => Promise<number>;
   /** Unload the model from memory */
@@ -33,7 +37,13 @@ export type UseGemmaAgentReturn = {
 };
 
 export function useGemmaAgent(): UseGemmaAgentReturn {
-  const { modelManager, engine, orchestrator } = useGemmaAgentContext();
+  const {
+    modelManager,
+    engine,
+    orchestrator,
+    activeCategories,
+    setActiveCategories,
+  } = useGemmaAgentContext();
 
   const [messages, setMessages] = useState<ReadonlyArray<Message>>([]);
   const [streamingText, setStreamingText] = useState('');
@@ -215,6 +225,8 @@ export function useGemmaAgent(): UseGemmaAgentReturn {
     activeSkill,
     error,
     contextUsage,
+    activeCategories,
+    setActiveCategories,
     loadModel,
     unloadModel,
     reset,

@@ -156,6 +156,8 @@ export type SkillManifest = {
   instructions?: string;
   /** Whether this skill requires network access. SDK checks connectivity before execution. */
   requiresNetwork?: boolean;
+  /** Skill category for grouping (e.g. 'utility', 'research'). Uncategorized skills are always included unless explicitly excluded. */
+  category?: string;
 };
 
 export type SkillResult = {
@@ -185,6 +187,8 @@ export type AgentConfig = {
   skillRouting?: 'all' | 'bm25';
   /** Max skills sent to the model per invocation (only used with 'bm25' routing). Default: 5 */
   maxToolsPerInvocation?: number;
+  /** When set, only skills matching a listed category are sent to the model. Uncategorized skills are always included unless this array is non-empty and doesn't include 'uncategorized'. */
+  activeCategories?: string[];
 };
 
 export type ContextUsage = {

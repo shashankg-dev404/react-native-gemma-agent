@@ -117,6 +117,7 @@ export const deviceLocationSkill: SkillManifest = {
   version: '1.2.0',
   type: 'native',
   requiresNetwork: false,
+  category: 'utility',
   parameters: {},
   requiredParameters: [],
   instructions:

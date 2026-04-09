@@ -8,6 +8,7 @@ export const readCalendarSkill: SkillManifest = {
   version: '1.0.0',
   type: 'native',
   requiresNetwork: false,
+  category: 'utility',
   parameters: {
     date: {
       type: 'string',

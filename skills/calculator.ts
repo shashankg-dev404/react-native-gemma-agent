@@ -6,6 +6,7 @@ export const calculatorSkill: SkillManifest = {
   version: '1.0.0',
   type: 'native',
   requiresNetwork: false,
+  category: 'utility',
   parameters: {
     expression: {
       type: 'string',

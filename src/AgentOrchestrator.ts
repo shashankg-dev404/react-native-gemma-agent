@@ -2,6 +2,7 @@ import type {
   Message,
   AgentEvent,
   AgentConfig,
+  SkillManifest,
   SkillResult,
 } from './types';
 import type { InferenceEngine } from './InferenceEngine';
@@ -13,13 +14,18 @@ import {
   type ParsedToolCall,
 } from './FunctionCallParser';
 
-const DEFAULT_CONFIG: Required<AgentConfig> = {
+type ResolvedConfig = Required<Omit<AgentConfig, 'activeCategories'>> & {
+  activeCategories?: string[];
+};
+
+const DEFAULT_CONFIG: ResolvedConfig = {
   maxChainDepth: 5,
   skillTimeout: 30_000,
   systemPrompt:
     'You are a helpful AI assistant running on-device. Answer concisely and accurately.',
   skillRouting: 'all',
   maxToolsPerInvocation: 5,
+  activeCategories: undefined,
 };
 
 export type SkillExecutor = (
@@ -32,7 +38,7 @@ export class AgentOrchestrator {
   private engine: InferenceEngine;
   private registry: SkillRegistry;
   private executor: SkillExecutor | null = null;
-  private config: Required<AgentConfig>;
+  private config: ResolvedConfig;
   private history: Message[] = [];
   private _isProcessing = false;
   private bm25: BM25Scorer = new BM25Scorer();
@@ -207,20 +213,36 @@ export class AgentOrchestrator {
     this.config = { ...this.config, systemPrompt: prompt };
   }
 
+  setActiveCategories(categories: string[] | undefined): void {
+    this.config = { ...this.config, activeCategories: categories };
+  }
+
+  getActiveCategories(): string[] | undefined {
+    return this.config.activeCategories;
+  }
+
   private getToolsForQuery(query: string) {
+    // Step 1: Category filter (if activeCategories is set)
+    const categoryFiltered = this.registry.getSkillsForCategories(
+      this.config.activeCategories,
+    );
+
+    // Step 2: Routing — 'all' or 'bm25'
     if (this.config.skillRouting !== 'bm25') {
-      return this.registry.toToolDefinitions();
+      return this.skillsToToolDefs(categoryFiltered);
     }
 
-    const allSkills = this.registry.getSkills();
-    if (allSkills.length <= this.config.maxToolsPerInvocation) {
-      return this.registry.toToolDefinitions();
+    if (categoryFiltered.length <= this.config.maxToolsPerInvocation) {
+      return this.skillsToToolDefs(categoryFiltered);
     }
 
-    this.bm25.buildIndex(allSkills);
+    this.bm25.buildIndex(categoryFiltered);
     const ranked = this.bm25.topN(query, this.config.maxToolsPerInvocation);
+    return this.skillsToToolDefs(ranked.map(({ skill }) => skill));
+  }
 
-    return ranked.map(({ skill }) => ({
+  private skillsToToolDefs(skills: readonly SkillManifest[]) {
+    return skills.map((skill) => ({
       type: 'function' as const,
       function: {
         name: skill.name,

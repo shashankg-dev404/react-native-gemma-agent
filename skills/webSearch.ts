@@ -6,6 +6,7 @@ export const webSearchSkill: SkillManifest = {
   version: '2.0.0',
   type: 'js',
   requiresNetwork: true,
+  category: 'research',
   parameters: {
     query: {
       type: 'string',

@@ -1,7 +1,9 @@
 import React, {
   createContext,
+  useCallback,
   useContext,
   useRef,
+  useState,
   useLayoutEffect,
   useMemo,
 } from 'react';
@@ -22,6 +24,8 @@ export type GemmaAgentContextValue = {
   engine: InferenceEngine;
   registry: SkillRegistry;
   orchestrator: AgentOrchestrator;
+  activeCategories: string[] | undefined;
+  setActiveCategories: (categories: string[] | undefined) => void;
 };
 
 const GemmaAgentContext = createContext<GemmaAgentContextValue | null>(null);
@@ -80,7 +84,26 @@ export function GemmaAgentProvider({
     }
   }, []);
 
-  const value = useMemo(() => instances.current!, []);
+  const [activeCategories, setActiveCategoriesState] = useState<
+    string[] | undefined
+  >(agentConfig?.activeCategories);
+
+  const setActiveCategories = useCallback(
+    (categories: string[] | undefined) => {
+      setActiveCategoriesState(categories);
+      instances.current!.orchestrator.setActiveCategories(categories);
+    },
+    [],
+  );
+
+  const value = useMemo(
+    () => ({
+      ...instances.current!,
+      activeCategories,
+      setActiveCategories,
+    }),
+    [activeCategories, setActiveCategories],
+  );
 
   return (
     <GemmaAgentContext.Provider value={value}>
