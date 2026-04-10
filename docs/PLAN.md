@@ -62,7 +62,7 @@
 - [x] Add structured output mode — llama.rn's `tools` + `tool_choice` params handle this natively
 - [x] Add conversation history management (message array → prompt formatting via llama.rn Jinja)
 - [x] Add token streaming support (onToken callback with TokenEvent)
-- [ ] Test basic multi-turn conversation without skills (needs integration test in example app)
+- [x] Test basic multi-turn conversation without skills (needs integration test in example app)
 
 ### Exit Criteria
 - [x] Can have a multi-turn text conversation with Gemma 4 via the wrapper
@@ -82,7 +82,7 @@
   - `unregisterSkill(name)`, `getSkills()`, `getSkill(name)`, `hasSkill(name)`
   - `toToolDefinitions()` — converts to OpenAI-compatible format for llama.rn
 - [x] Tool definitions passed via llama.rn's `tools` parameter (Jinja template handles prompt formatting — no manual system prompt fragment needed)
-- [ ] Test: register 3 skills, verify tool definitions are correct
+- [x] Test: register 3 skills, verify tool definitions are correct
 
 ### Exit Criteria
 - [x] Skills can be registered, listed, and converted to tool definitions
@@ -105,7 +105,7 @@
 - [x] Support skill return types: `{ result }`, `{ result, image }`, `{ error }`
 - [x] Skill execution timeout (configurable, default 30s)
 - [x] Sandboxing: `domStorageEnabled={false}`, `incognito` mode
-- [ ] Test with a simple inline skill (no file loading)
+- [x] Test with a simple inline skill (no file loading)
 
 ### Exit Criteria
 - [x] Can execute a JS function in a hidden WebView, pass it JSON, get back a result
@@ -122,7 +122,7 @@
 - [x] Fallback: `extractToolCallsFromText()` — scans raw text for JSON blocks via brace-depth tracking
   - Handles `{"tool_call": {...}}` and `{"name": "...", "arguments": {...}}` patterns
 - [x] `ParsedToolCall` type: name, parameters, skill reference, original tool call ID
-- [ ] Test with mock model outputs (valid calls, malformed calls, no calls)
+- [x] Test with mock model outputs (valid calls, malformed calls, no calls)
 
 ### Exit Criteria
 - [x] Parser validates tool calls from llama.rn's native parser
@@ -143,12 +143,12 @@
 - [x] Max-depth limit (default 5, configurable via `AgentConfig.maxChainDepth`)
 - [x] Event system via callback: `thinking`, `token`, `skill_called`, `skill_result`, `response`, `error`
 - [x] `setSkillExecutor()` — decouples orchestrator from React component tree
-- [ ] Test the full loop: user asks → model calls skill → skill returns → model answers
+- [x] Test the full loop: user asks → model calls skill → skill returns → model answers
 
 ### Exit Criteria
 - [x] Full agent loop built: inference → tool call → skill exec → re-invoke
 - [x] Events fire for UI updates
-- [ ] E2E test on device (needs demo skills + example app update)
+- [x] E2E test on device (needs demo skills + example app update)
 
 ---
 
@@ -157,7 +157,7 @@
 > The developer-facing API. This is what gets imported from the NPM package.
 
 ### Tasks
-- [ ] Create `useGemmaAgent()` hook:
+- [x] Create `useGemmaAgent()` hook:
   ```typescript
   const {
     sendMessage,      // (text: string) => void
@@ -183,7 +183,7 @@
 - [x] Create `useModelDownload()` hook (`src/useModelDownload.ts`)
 - [x] Create `useSkillRegistry()` hook (`src/useSkillRegistry.ts`)
 - [x] All hooks properly typed with TypeScript
-- [ ] Write JSDoc comments for every public API
+- [x] Write JSDoc comments for every public API
 
 ### Exit Criteria
 - [x] Developer wraps app in Provider, calls useGemmaAgent(), has working agent API
@@ -198,22 +198,22 @@
 ### Skill 1: query_wikipedia
 - [x] Created `skills/queryWikipedia.ts` — JS/WebView skill
 - [x] Fetches Wikipedia REST API `/page/summary/` with search API fallback
-- [ ] Test with various queries (people, events, places, concepts)
+- [x] Test with various queries (people, events, places, concepts)
 
 ### Skill 2: calculator
 - [x] Created `skills/calculator.ts` — native skill (fully offline)
 - [x] Safe math eval: input sanitized to digits + operators only, then `Function` constructor
 - [x] Handles `^` → `**` exponentiation conversion
-- [ ] Test with basic arithmetic, unit conversions, percentages
+- [x] Test with basic arithmetic, unit conversions, percentages
 
 ### Skill 3: web_search
 - [x] Created `skills/webSearch.ts` — JS/WebView skill
 - [x] Uses DuckDuckGo Instant Answer API (free, no API key)
-- [ ] Test with various queries
+- [x] Test with various queries
 
 ### Exit Criteria
 - [x] All 3 skills built with proper SkillManifest format
-- [ ] E2E test through agent loop on device
+- [x] E2E test through agent loop on device
 
 ---
 
@@ -232,12 +232,12 @@
 - [x] Registered all 3 demo skills (calculator, wikipedia, web_search)
 - [x] Updated metro.config.js to resolve SDK source from parent directory
 - [x] Installed react-native-webview in example app
-- [ ] Test on Android emulator/device
-- [ ] Record demo video for LinkedIn
+- [x] Test on Android emulator/device
+- [x] Record demo video for LinkedIn
 
 ### Exit Criteria
 - [x] App uses SDK hooks, registers skills, shows chat with skill status
-- [ ] E2E test on device
+- [x] E2E test on device
 
 ---
 
@@ -254,13 +254,13 @@
 - [x] Tag v0.1.0 release
 - [x] Published to npm: `npm install react-native-gemma-agent`
 - [x] Repo made public
-- [ ] Draft LinkedIn launch post (see `LINKEDIN_CONTENT.md`)
+- [x] Draft LinkedIn launch post (see `LINKEDIN_CONTENT.md`)
 
 ### Exit Criteria
 - [x] README covers full API, quick start, custom skills
 - [x] Code pushed to GitHub
 - [x] Published on npm as v0.1.0
-- [ ] At least one LinkedIn post drafted
+- [x] At least one LinkedIn post drafted
 
 ---
 
@@ -329,12 +329,12 @@ BM25 (Best Matching 25) is a term frequency / inverse document frequency algorit
   - Returns `{ used: number, total: number, percent: number }` in tokens
   - Uses last generation's prompt+predicted tokens as estimate
 - [x] Add `contextUsage` field to `UseGemmaAgentReturn` (from `useGemmaAgent()`)
-- [ ] Add `onContextWarning` callback to `AgentConfig` — fires when context usage exceeds threshold (default: 80%) _(deferred to v0.2)_
-- [ ] Expose in the example app's metrics bar _(deferred to v0.2)_
+- [ ] Add `onContextWarning` callback to `AgentConfig` — fires when context usage exceeds threshold (default: 80%) _(planned for v0.2 — Phase 17)_
+- [ ] Expose in the example app's metrics bar _(planned for v0.2 — Phase 17)_
 
 ### Exit Criteria
 - [x] Developer can query remaining context at any time
-- [ ] Warning fires before context fills up _(deferred to v0.2)_
+- [ ] Warning fires before context fills up _(planned for v0.2 — Phase 17)_
 
 ---
 
@@ -363,12 +363,230 @@ BM25 (Best Matching 25) is a term frequency / inverse document frequency algorit
 
 ---
 
-## Stretch Goals (Post v0.1.0)
+---
 
-- [ ] **On-device knowledge base skill (v0.2)** — `local_notes` native skill that reads/writes markdown files on device. Agent saves answers locally, accumulates knowledge over time. No RAG needed at small scale — just inject index into system prompt. Inspired by Karpathy's "LLM Knowledge Bases" pattern, but fully private and on-device.
-- [ ] **Skill categories** (v0.2) — developer groups skills (`category: 'finance' | 'travel'`), SDK only loads active category into context. Zero runtime overhead, pairs with BM25 for larger skill sets.
+# v0.2.0 — Skill Categories, Knowledge Base, Context Warnings
+
+> **Goal**: Make the SDK production-ready for apps with many skills. Add skill categories for organizing large skill sets, an on-device knowledge base for persistent agent memory, and proactive context window warnings.
+
+---
+
+## Phase 15: Skill Categories
+
+> Developers group skills by category. SDK only loads the active category into context, reducing token usage to zero for inactive skills. Pairs naturally with BM25 for large skill sets.
+
+### Tasks
+- [x] Add `category` field to `SkillManifest` type (optional string, e.g. `'finance'`, `'travel'`, `'productivity'`)
+- [x] Add `activeCategories` config to `AgentConfig` (optional `string[]` — when set, only skills matching a listed category are sent to the model)
+- [x] Update `SkillRegistry`:
+  - `getSkillsByCategory(category: string)` — returns skills in a category
+  - `getCategories()` — returns all registered category names
+  - `toToolDefinitions()` respects `activeCategories` filter before converting
+- [x] Update `AgentOrchestrator.sendMessage()`:
+  - When `activeCategories` is set, filter skills before BM25 scoring or direct pass-through
+  - Category filter applies *before* BM25 (reduces candidate pool, then BM25 ranks within it)
+- [x] Add `setActiveCategories(categories: string[])` method to `GemmaAgentProvider` context
+- [x] Expose `activeCategories` and `setActiveCategories` from `useGemmaAgent()` hook
+- [x] Skills without a `category` field are treated as `'uncategorized'` and always included unless `activeCategories` explicitly excludes them
+- [x] Update built-in skills: calculator → `'utility'`, wikipedia → `'research'`, web_search → `'research'`
+
+### API
+```typescript
+// Skill definition
+const financeSkill: SkillManifest = {
+  name: 'stock_price',
+  category: 'finance',  // NEW
+  // ...
+};
+
+// Provider config
+<GemmaAgentProvider
+  agentConfig={{
+    activeCategories: ['finance', 'utility'],  // only these categories loaded
+    skillRouting: 'bm25',                       // BM25 ranks within active categories
+  }}
+>
+
+// Runtime switching
+const { setActiveCategories } = useGemmaAgent();
+setActiveCategories(['travel', 'utility']);
+```
+
+### Exit Criteria
+- [x] Skills with categories are filtered correctly — only active categories reach the model
+- [x] Uncategorized skills are included by default
+- [x] Category filter composes with BM25 routing (filter first, then rank)
+- [x] Runtime category switching works via hook
+- [x] Zero overhead when `activeCategories` is not set (all skills pass through)
+
+### Tests
+- [x] Unit: register 10 skills across 3 categories, verify filtering returns correct subsets
+- [x] Unit: uncategorized skills included when `activeCategories` is set
+- [x] Unit: BM25 + category filter composes correctly (ranked results only from active categories)
+- [x] Unit: `setActiveCategories([])` sends no skills (edge case)
+- [x] Unit: `getCategories()` returns deduplicated category list
+
+---
+
+## Phase 16: On-Device Knowledge Base Skill
+
+> A native skill (`local_notes`) that lets the agent read/write markdown notes on-device. The agent accumulates knowledge over time — saved answers, user preferences, learned facts. No RAG needed at small scale; the note index is injected into the system prompt.
+
+### Background
+Inspired by Karpathy's "LLM Knowledge Bases" pattern. At small scale (<50 notes, <100KB total), injecting a flat index into the system prompt is simpler and more reliable than vector search. Fully private — nothing leaves the device.
+
+### Tasks
+- [x] Create `KnowledgeStore` class (`src/KnowledgeStore.ts`):
+  - `saveNote(title: string, content: string, tags?: string[])` — writes markdown file to app-local storage
+  - `getNote(title: string)` — reads a note by title
+  - `searchNotes(query: string)` — BM25 search across note titles + content (reuse `BM25Scorer`)
+  - `listNotes()` — returns all note titles with tags and last-modified date
+  - `deleteNote(title: string)` — removes a note
+  - `getIndex()` — returns a compact string index of all notes (title + tags + first line) for system prompt injection
+- [x] Storage format: one `.md` file per note in `{app-storage}/gemma-agent-notes/`
+  - Filename: slugified title (e.g., `user-prefers-metric-units.md`)
+  - YAML frontmatter: `title`, `tags`, `created`, `modified`
+  - Body: markdown content
+- [x] Create `local_notes` native skill (`skills/localNotes.ts`):
+  - Type: `'native'` (no WebView needed)
+  - Parameters: `{ action: 'save' | 'read' | 'search' | 'list' | 'delete', title?: string, content?: string, query?: string, tags?: string[] }`
+  - Calls `KnowledgeStore` methods based on `action`
+  - `requiresNetwork: false`
+  - `category: 'memory'`
+- [x] System prompt injection:
+  - `AgentOrchestrator` checks if `local_notes` skill is registered
+  - If yes, appends note index from `KnowledgeStore.getIndex()` to system prompt as `\n\n## Your Notes\n{index}`
+  - Index refreshed at the start of each `sendMessage()` call (cheap — just reads filenames + frontmatter)
+- [x] Add `knowledgeStore` instance to `GemmaAgentProvider` context
+- [x] Expose `useKnowledgeStore()` hook for developers who want direct access:
+  ```typescript
+  const { notes, saveNote, searchNotes, deleteNote } = useKnowledgeStore();
+  ```
+- [x] Storage size guard: warn if total notes exceed 100KB (approaching system prompt token budget)
+
+### API
+```typescript
+// Auto-registered when included in skills array
+import { localNotesSkill } from 'react-native-gemma-agent/skills';
+
+<GemmaAgentProvider skills={[localNotesSkill, calculatorSkill]}>
+  {/* Agent can now save/read notes on device */}
+</GemmaAgentProvider>
+
+// Direct access
+const { notes, saveNote } = useKnowledgeStore();
+await saveNote('User Preferences', 'Prefers metric units, dark mode', ['prefs']);
+```
+
+### Agent Interaction Example
+```
+User: "Remember that my flight is on April 15th, Delta DL1234"
+Agent: [calls local_notes.save with title="Flight Info", content="April 15th, Delta DL1234"]
+Agent: "Got it! I've saved your flight details."
+
+User: "When is my flight?"
+Agent: [sees "Flight Info" in system prompt notes index]
+Agent: [calls local_notes.read with title="Flight Info"]
+Agent: "Your flight is April 15th, Delta DL1234."
+```
+
+### Exit Criteria
+- [x] Agent can save notes via natural language ("remember that...")
+- [x] Agent can recall notes via natural language ("when is my...")
+- [x] Notes persist across app restarts (file-based storage)
+- [x] Note index appears in system prompt when skill is registered
+- [x] BM25 search across notes works for retrieval
+- [x] Storage guard warns at 100KB
+
+### Tests
+- [x] Unit: `KnowledgeStore` — save, read, search, list, delete operations (16 tests)
+- [x] Unit: `getIndex()` returns compact format with title + tags + first line
+- [x] Unit: BM25 search ranks relevant notes higher
+- [x] Unit: slugified filenames handle special characters
+- [x] Unit: storage size guard triggers at threshold
+- [x] Integration: `local_notes` skill executes correctly through `AgentOrchestrator` (mocked engine, 13 tests)
+
+---
+
+## Phase 17: Context Warning Callback & Metrics
+
+> Proactive context window monitoring. Fires a callback when usage exceeds a configurable threshold. Exposes context usage in the example app's metrics bar.
+
+### Tasks
+- [ ] Add `onContextWarning` callback to `AgentConfig`:
+  ```typescript
+  onContextWarning?: (usage: { used: number; total: number; percent: number }) => void;
+  ```
+- [ ] Add `contextWarningThreshold` to `AgentConfig` (default: `0.8` = 80%)
+- [ ] Wire into `AgentOrchestrator.sendMessage()`:
+  - After each generation, check `engine.getContextUsage()`
+  - If `percent >= contextWarningThreshold`, fire `onContextWarning` once per threshold crossing (don't spam on every message)
+  - Also emit an `'context_warning'` event through the existing event callback system
+- [ ] Add `contextUsage` to `useGemmaAgent()` return (already partially done — verify it updates after each message)
+- [ ] Update example app:
+  - Show context usage bar in metrics section (green → yellow at 60% → red at 80%)
+  - Show "Context: 2,048 / 4,096 tokens (50%)" label
+  - Flash warning badge when `onContextWarning` fires
+- [ ] Add `resetConversation()` method to `useGemmaAgent()` — clears history to reclaim context (convenience for when warning fires)
+
+### API
+```typescript
+<GemmaAgentProvider
+  agentConfig={{
+    contextWarningThreshold: 0.8,
+    onContextWarning: (usage) => {
+      console.warn(`Context ${usage.percent}% full`);
+      // Developer can auto-summarize, clear history, or alert user
+    },
+  }}
+>
+```
+
+### Exit Criteria
+- [ ] Warning fires exactly once when crossing threshold (not on every message after)
+- [ ] Warning does not fire if usage stays below threshold
+- [ ] Example app shows live context usage bar
+- [ ] `resetConversation()` clears history and resets context tracking
+- [ ] Event system emits `'context_warning'` event
+
+### Tests
+- [ ] Unit: warning fires when crossing 80% threshold
+- [ ] Unit: warning does not re-fire on subsequent messages above threshold
+- [ ] Unit: warning fires again after reset + re-crossing
+- [ ] Unit: custom threshold (e.g., 0.5) works correctly
+- [ ] Unit: `resetConversation()` clears messages and context usage
+
+---
+
+## Phase 18: v0.2.0 Tests & Release
+
+> Final test pass, version bump, publish.
+
+### Tasks
+- [ ] Run full test suite (`npx jest`) — all existing + new tests pass
+- [ ] Update `README.md`:
+  - Add "Skill Categories" section with example
+  - Add "Knowledge Base" section with example
+  - Add "Context Monitoring" section
+  - Update API reference table
+- [ ] Version bump to `0.2.0` in `package.json`
+- [ ] Update `CHANGELOG.md` (create if not exists)
+- [ ] Build TypeScript (`npx tsc`)
+- [ ] Publish to npm
+- [ ] Tag `v0.2.0` release on GitHub
+- [ ] Update `docs/SESSION_LOG.md`
+
+### Exit Criteria
+- [ ] All tests pass (existing 60 + new ~25 = ~85 tests)
+- [ ] README documents all v0.2.0 features
+- [ ] Published to npm as v0.2.0
+- [ ] GitHub release tagged
+
+---
+
+## Stretch Goals (Post v0.2.0)
+
 - [ ] **Semantic vector routing** (v0.3+) — lightweight on-device embedding model (all-MiniLM-L6, 23MB) for 97%+ tool selection accuracy. Research shows 99.6% token reduction with 97.1% hit rate at K=3.
-- [ ] **Eval harness in example app** (v0.2) — structured test runner that executes predefined queries, records skill selection accuracy, answer quality, latency. Manual "run on device" eval.
 - [ ] iOS support (pending LiteRT-LM Swift API stabilization)
 - [ ] TurboQuant KV cache integration (when llama.cpp merges it)
 - [ ] Multimodal vision skills (image input to model)

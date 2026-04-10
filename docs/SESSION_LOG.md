@@ -506,3 +506,91 @@
 ## v0.1.0 Shipped
 
 All planned phases complete. SDK published on npm and GitHub.
+
+---
+
+## Session — 2026-04-09/10 (v0.2.0 prep — Phase 15 & 16)
+
+### Phase 15 — Skill Categories
+Added optional `category` field to `SkillManifest` for organizing large skill sets. Categories surface in skill listings and can be used by hosts to group skills in UI. Backward compatible — existing skills without a category continue to work.
+
+### Phase 16 — On-Device Knowledge Base
+Built a persistent on-device note store for the SDK so agents can remember things across conversations.
+
+**New components:**
+- `src/KnowledgeStore.ts` — Markdown-with-frontmatter notes store, BM25 search, 5MB hard cap, ID-based addressing.
+- `src/useKnowledgeStore.ts` — React hook exposing the store to components.
+- `skills/localNotes.ts` — Factory `createLocalNotesSkill(store)` returns a `SkillManifest` with `save | read | search | list | delete` actions, input validation (title ≤200, content ≤50KB, ≤20 tags).
+- `src/__tests__/KnowledgeStore.test.ts` + `src/__tests__/LocalNotesSkill.test.ts` — Unit coverage.
+
+**Wiring:**
+- `GemmaAgentProvider` accepts an **optional** `knowledgeStore?: KnowledgeStore` prop (backward compatible — existing v0.1.x apps work unchanged).
+- `src/index.ts` exports `KnowledgeStore`, `useKnowledgeStore`, `Note`, `NoteMetadata`, `NoteIndexEntry`.
+
+**Quality gates passed before testing:**
+- 105 unit tests passing
+- TypeScript clean (0 errors)
+- Gradle BUILD SUCCESSFUL
+- Metro bundle compiles cleanly
+
+### Emulator Verification (2026-04-10)
+
+Two test scenarios run on Pixel_9_Pro AVD against the live `example/` app.
+
+**Test 1 — Backward compatibility (PASS)**
+- Built and ran the unmodified `example/App.tsx` (5 skills, no `knowledgeStore` prop).
+- App launches cleanly to "Gemma Agent" header, "on-device AI | 5 skills | not_downloaded", Load Model + Download buttons, Chat/Logs tabs.
+- No red screen, no crash. v0.1.x API contract intact.
+
+**Test 2 — local_notes E2E (PASS for save, partial for recall)**
+
+Temporarily modified `example/App.tsx` to register `localNotesSkill` and pass `knowledgeStore` to the provider (6 skills shown). Reverted after testing — no commit.
+
+Steps + observed Logs tab events:
+
+```
+[09:28:23] Searching for model on device...
+[09:28:23] Model found on device.
+[09:28:23] Loading model into memory...
+[09:28:45] Model loaded in 22.1s
+[09:29:15] User: "Save my flight info: April 15 Delta DL1234"
+[09:38:56] Calling skill: local_notes({"action":"save","content":"April 15 Delta DL1234","title":"Flight Info"})
+[09:38:56] Skill local_notes returned: Note "Flight Info" saved successfully.
+[09:38:57] Assistant responded (60 chars)
+[09:41:18] User: "When is my flight?"
+[10:04:20] Calling skill: read_calendar({})
+[10:09:43] Skill read_calendar returned: Calendar permission denied by user.
+[10:09:45] Assistant responded (66 chars)
+```
+
+**Save flow** — full success:
+- Gemma 4 E2B selected the correct tool (`local_notes`), extracted the right parameters (`action: save`, `content: "April 15 Delta DL1234"`, `title: "Flight Info"`), and the skill executed successfully on-device. Assistant replied: *"I have saved your flight information: April 15 Delta DL1234."*
+
+**Recall flow** — model behavior surprise:
+- For "When is my flight?", Gemma chose `read_calendar` first instead of `local_notes`. When calendar permission was denied, the model gave up and replied *"I am sorry, but I do not have access to your calendar information."* — it never fell back to the local note it had just saved.
+- This is a **model decision**, not an SDK or skill bug. The local_notes skill itself works (proven by the save). The model's chain-of-thought (visible in the streaming output) showed it considered both tools but defaulted to calendar for "when" questions.
+- **Mitigation options for users**: tighten the system prompt to prefer `local_notes` for personal info recall, or rename the skill to something more recall-prominent like `personal_memory`. The SDK plumbing is correct.
+
+### Performance notes
+- E2B inference on the emulator is **very slow** — the save tool call took ~9 minutes wall clock to generate (model produced an extensive chain-of-thought before the tool call). Recall query took ~22 minutes before calling `read_calendar`. On a real device, this is expected to be ~30s/turn based on Phase 10 device tests (30 tok/s).
+- Emulator-only artifact, not a regression.
+
+### Files Modified This Session
+- `src/GemmaAgentProvider.tsx` — optional `knowledgeStore` prop
+- `src/AgentOrchestrator.ts` — wiring for knowledge store access
+- `src/index.ts` — export KnowledgeStore + types
+- `skills/index.ts` — local_notes registered
+- `docs/PLAN.md` — Phase 15 + 16 checked off
+
+### Files Created This Session
+- `src/KnowledgeStore.ts`
+- `src/useKnowledgeStore.ts`
+- `src/__tests__/KnowledgeStore.test.ts`
+- `src/__tests__/LocalNotesSkill.test.ts`
+- `skills/localNotes.ts`
+
+### What to Pick Up Next
+1. Decide whether to ship Phase 15+16 as **v0.2.0** now, or bundle with more features first.
+2. Consider tweaking the example app's `SYSTEM_PROMPT` to nudge the model toward `local_notes` for personal recall (the "When is my flight?" gap is a UX concern users will hit).
+3. Optional: add a `read_calendar` polite-decline path so denied permission doesn't end the turn — let the model chain to the next-best tool.
+4. Update README with Knowledge Base section + `KnowledgeStore` + `local_notes` skill docs before tagging v0.2.0.

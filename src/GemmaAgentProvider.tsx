@@ -11,6 +11,7 @@ import { ModelManager } from './ModelManager';
 import { InferenceEngine } from './InferenceEngine';
 import { SkillRegistry } from './SkillRegistry';
 import { AgentOrchestrator } from './AgentOrchestrator';
+import { KnowledgeStore } from './KnowledgeStore';
 import { SkillSandbox, type SkillSandboxHandle } from './SkillSandbox';
 import type {
   ModelConfig,
@@ -24,6 +25,7 @@ export type GemmaAgentContextValue = {
   engine: InferenceEngine;
   registry: SkillRegistry;
   orchestrator: AgentOrchestrator;
+  knowledgeStore: KnowledgeStore | null;
   activeCategories: string[] | undefined;
   setActiveCategories: (categories: string[] | undefined) => void;
 };
@@ -41,6 +43,10 @@ export type GemmaAgentProviderProps = {
   engineConfig?: InferenceEngineConfig;
   /** Agent orchestrator configuration */
   agentConfig?: AgentConfig;
+  /** Optional shared KnowledgeStore instance. When provided, used for both
+   *  the local_notes skill and useKnowledgeStore(). When omitted, a default
+   *  instance is created if local_notes is in the skills list. */
+  knowledgeStore?: KnowledgeStore;
   children: React.ReactNode;
 };
 
@@ -50,12 +56,13 @@ export function GemmaAgentProvider({
   systemPrompt,
   engineConfig,
   agentConfig,
+  knowledgeStore: externalStore,
   children,
 }: GemmaAgentProviderProps) {
   const sandboxRef = useRef<SkillSandboxHandle>(null);
 
   // Create SDK instances once (stable across re-renders)
-  const instances = useRef<GemmaAgentContextValue | null>(null);
+  const instances = useRef<Omit<GemmaAgentContextValue, 'activeCategories' | 'setActiveCategories'> | null>(null);
   if (!instances.current) {
     const modelManager = new ModelManager(model);
     const engine = new InferenceEngine(engineConfig);
@@ -66,13 +73,31 @@ export function GemmaAgentProvider({
       systemPrompt: systemPrompt ?? agentConfig?.systemPrompt,
     });
 
+    // Use the externally-provided KnowledgeStore if given, otherwise
+    // create a default one when local_notes is in the skills list.
+    // This ensures the skill, hook, and orchestrator all share one instance.
+    const hasLocalNotes = skills?.some((s) => s.name === 'local_notes');
+    let knowledgeStore: KnowledgeStore | null = externalStore ?? null;
+    if (hasLocalNotes && !knowledgeStore) {
+      knowledgeStore = new KnowledgeStore();
+    }
+    if (knowledgeStore) {
+      orchestrator.setKnowledgeStore(knowledgeStore);
+    }
+
     if (skills) {
       for (const skill of skills) {
         registry.registerSkill(skill);
       }
     }
 
-    instances.current = { modelManager, engine, registry, orchestrator };
+    instances.current = {
+      modelManager,
+      engine,
+      registry,
+      orchestrator,
+      knowledgeStore,
+    };
   }
 
   // Wire SkillSandbox executor into orchestrator after mount
@@ -98,7 +123,11 @@ export function GemmaAgentProvider({
 
   const value = useMemo(
     () => ({
-      ...instances.current!,
+      modelManager: instances.current!.modelManager,
+      engine: instances.current!.engine,
+      registry: instances.current!.registry,
+      orchestrator: instances.current!.orchestrator,
+      knowledgeStore: instances.current!.knowledgeStore,
       activeCategories,
       setActiveCategories,
     }),

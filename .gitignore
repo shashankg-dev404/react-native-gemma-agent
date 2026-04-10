@@ -24,3 +24,9 @@ lib/
 
 # LinkedIn drafts (personal content, not for repo)
 docs/LINKEDIN_CONTENT.md
+
+# Reddit reply drafts (personal content, not for repo)
+REDDIT_COMMENTS.md
+
+# Local emulator/device test screenshots
+example/screenshots/

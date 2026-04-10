@@ -7,7 +7,9 @@ export { InferenceEngine } from './InferenceEngine';
 export { SkillRegistry } from './SkillRegistry';
 export { AgentOrchestrator } from './AgentOrchestrator';
 export { BM25Scorer } from './BM25Scorer';
+export { KnowledgeStore } from './KnowledgeStore';
 export type { SkillExecutor } from './AgentOrchestrator';
+export type { Note, NoteMetadata, NoteIndexEntry } from './KnowledgeStore';
 
 // React hooks & provider
 export { GemmaAgentProvider } from './GemmaAgentProvider';
@@ -18,6 +20,8 @@ export { useModelDownload } from './useModelDownload';
 export type { UseModelDownloadReturn } from './useModelDownload';
 export { useSkillRegistry } from './useSkillRegistry';
 export type { UseSkillRegistryReturn } from './useSkillRegistry';
+export { useKnowledgeStore } from './useKnowledgeStore';
+export type { UseKnowledgeStoreReturn } from './useKnowledgeStore';
 
 // Skill execution
 export { SkillSandbox } from './SkillSandbox';
