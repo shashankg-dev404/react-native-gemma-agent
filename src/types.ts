@@ -174,6 +174,7 @@ export type AgentEvent =
   | { type: 'skill_called'; name: string; parameters: Record<string, unknown> }
   | { type: 'skill_result'; name: string; result: SkillResult }
   | { type: 'response'; text: string; reasoning: string | null }
+  | { type: 'context_warning'; usage: ContextUsage }
   | { type: 'error'; error: string };
 
 export type AgentConfig = {
@@ -189,6 +190,15 @@ export type AgentConfig = {
   maxToolsPerInvocation?: number;
   /** When set, only skills matching a listed category are sent to the model. Uncategorized skills are always included unless this array is non-empty and doesn't include 'uncategorized'. */
   activeCategories?: string[];
+  /** Context usage fraction (0-1) at which `onContextWarning` fires. Default: 0.8 (80%). */
+  contextWarningThreshold?: number;
+  /**
+   * Called once per threshold crossing when context usage reaches
+   * `contextWarningThreshold`. Use this to auto-summarize, clear history,
+   * or alert the user before the context window fills up. Fires at most
+   * once per conversation until `reset()` is called.
+   */
+  onContextWarning?: (usage: ContextUsage) => void;
 };
 
 export type ContextUsage = {

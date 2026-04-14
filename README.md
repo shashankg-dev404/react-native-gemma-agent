@@ -12,14 +12,57 @@ Every major AI framework (LangChain, CrewAI, AutoGen) assumes a cloud LLM. But m
 
 Inspired by [Google AI Edge Gallery's Agent Skills](https://github.com/google-ai-edge/gallery), rebuilt as a React Native SDK that any developer can drop into their app.
 
+## What's New in v0.2.0
+
+### On-Device Knowledge Base — Your App Becomes an AI Notebook
+
+The agent can now **save, search, and recall notes** entirely on-device. No cloud. No third-party app. No API keys. Users tell the agent to remember something, and it persists across conversations and app restarts.
+
+```
+User: "Remember that my wifi password is swordfish"
+Agent: [saves note on-device] → "Got it, saved your wifi password."
+
+User: "What's my wifi password?"
+Agent: [reads from saved notes] → "Your wifi password is swordfish."
+```
+
+Under the hood, notes are stored as markdown files in app-local storage with BM25 search indexing. The note index is injected into the system prompt so the agent is always aware of what it knows — no RAG pipeline, no vector database, no external dependencies.
+
+**Use cases**: personal preferences, saved facts, flight details, shopping lists, study notes, bookmarks — anything the user wants their AI to remember.
+
+### Skill Categories — Organize Skills, Save Context Tokens
+
+Group skills by category (`'finance'`, `'travel'`, `'utility'`) and switch active categories at runtime. Only active categories consume context window tokens. With a 4K context window, this is the difference between 5 usable turns and 15.
+
+```typescript
+const { setActiveCategories } = useGemmaAgent();
+setActiveCategories(['travel', 'utility']); // only these skills loaded into context
+```
+
+### Context Window Monitoring — Know Before You Run Out
+
+Live context usage tracking with a configurable warning callback. The example app shows a color-coded progress bar (green → yellow → red) so users know when to clear chat.
+
+```typescript
+<GemmaAgentProvider
+  agentConfig={{
+    contextWarningThreshold: 0.8,
+    onContextWarning: (usage) => Alert.alert(`Context ${usage.percent}% full`),
+  }}
+>
+```
+
 ## What It Does
 
 - Runs **Gemma 4 E2B** (2.3B effective params, 4.6B total MoE) on-device via llama.rn
 - **Agent loop**: model generates -> detects tool calls -> executes skills -> feeds results back -> responds naturally
+- **On-device knowledge base**: save, search, and recall notes — persistent AI memory with zero cloud dependency
 - **JS Skill Sandbox**: execute skills in a hidden WebView (same pattern as Google AI Edge Gallery)
 - **Native Skills**: run skills directly in React Native context with full access to device APIs (GPS, calendar, health, gallery, etc.)
+- **Skill categories**: group skills and selectively load only what's needed per screen or context
+- **Context monitoring**: live token usage tracking with configurable warning threshold
 - **BM25 Skill Routing** (opt-in): smart pre-filtering when you have many skills — only sends the most relevant tools to the model per query
-- **React Hooks API**: `useGemmaAgent()`, `useModelDownload()`, `useSkillRegistry()`
+- **React Hooks API**: `useGemmaAgent()`, `useModelDownload()`, `useSkillRegistry()`, `useKnowledgeStore()`
 - **Streaming**: token-by-token output for real-time UI updates
 - Fully typed with TypeScript
 
@@ -30,8 +73,17 @@ import {
   GemmaAgentProvider,
   useGemmaAgent,
   useModelDownload,
+  KnowledgeStore,
 } from 'react-native-gemma-agent';
-import { calculatorSkill, queryWikipediaSkill } from 'react-native-gemma-agent/skills';
+import {
+  calculatorSkill,
+  queryWikipediaSkill,
+  createLocalNotesSkill,
+} from 'react-native-gemma-agent/skills';
+
+// Set up knowledge base
+const knowledgeStore = new KnowledgeStore();
+const localNotesSkill = createLocalNotesSkill(knowledgeStore);
 
 // 1. Wrap your app
 function App() {
@@ -41,7 +93,8 @@ function App() {
         repoId: 'unsloth/gemma-4-E2B-it-GGUF',
         filename: 'gemma-4-E2B-it-Q4_K_M.gguf',
       }}
-      skills={[calculatorSkill, queryWikipediaSkill]}
+      skills={[calculatorSkill, queryWikipediaSkill, localNotesSkill]}
+      knowledgeStore={knowledgeStore}
       systemPrompt="You are a helpful assistant."
     >
       <ChatScreen />
@@ -63,6 +116,9 @@ function ChatScreen() {
   // Chat with agent
   // const response = await sendMessage("What is 234 * 567?");
   // Agent calls calculator skill -> returns "132678"
+
+  // const response = await sendMessage("Remember my wifi password is swordfish");
+  // Agent saves note on-device -> "Got it, saved your wifi password."
 }
 ```
 
@@ -105,6 +161,7 @@ Wrap your app to initialize the SDK. Creates all internal instances and renders 
   systemPrompt={string}                   // Base system prompt
   engineConfig={InferenceEngineConfig}    // Optional engine tuning
   agentConfig={AgentConfig}               // Optional agent config
+  knowledgeStore={KnowledgeStore}         // Optional shared knowledge store (v0.2.0)
 >
   {children}
 </GemmaAgentProvider>
@@ -116,18 +173,21 @@ Main hook for chat interactions. Returns everything you need to build a chat UI.
 
 ```tsx
 const {
-  sendMessage,     // (text: string, onEvent?) => Promise<string>
-  messages,        // ReadonlyArray<Message> - conversation history
-  streamingText,   // string - tokens streamed so far (live typing effect)
-  isProcessing,    // boolean - is the agent thinking/executing?
-  isModelLoaded,   // boolean - model loaded and ready?
-  modelStatus,     // ModelStatus - lifecycle state
-  activeSkill,     // string | null - skill currently executing
-  error,           // string | null - last error
-  contextUsage,    // { used, total, percent } - context window consumption
-  loadModel,       // (onProgress?) => Promise<number> - returns load time ms
-  unloadModel,     // () => Promise<void>
-  reset,           // () => void - clear conversation history
+  sendMessage,        // (text: string, onEvent?) => Promise<string>
+  messages,           // ReadonlyArray<Message> - conversation history
+  streamingText,      // string - tokens streamed so far (live typing effect)
+  isProcessing,       // boolean - is the agent thinking/executing?
+  isModelLoaded,      // boolean - model loaded and ready?
+  modelStatus,        // ModelStatus - lifecycle state
+  activeSkill,        // string | null - skill currently executing
+  error,              // string | null - last error
+  contextUsage,       // { used, total, percent } - context window consumption
+  activeCategories,   // string[] | undefined - active skill categories (v0.2.0)
+  setActiveCategories,// (categories: string[] | undefined) => void (v0.2.0)
+  loadModel,          // (onProgress?) => Promise<number> - returns load time ms
+  unloadModel,        // () => Promise<void>
+  reset,              // () => void - clear conversation history
+  resetConversation,  // () => void - clear history + reset context tracking (v0.2.0)
 } = useGemmaAgent();
 ```
 
@@ -174,6 +234,26 @@ const {
   clear,            // () => void - remove all skills
 } = useSkillRegistry();
 ```
+
+### useKnowledgeStore()
+
+Direct access to the on-device note store. Use this to build custom UI around saved notes — listing, editing, or deleting notes outside the chat flow.
+
+```tsx
+const {
+  notes,         // NoteIndexEntry[] - all saved notes
+  saveNote,      // (title, content, tags?) => Promise<void>
+  getNote,       // (title) => Promise<Note | null>
+  searchNotes,   // (query) => Promise<SearchResult[]>
+  deleteNote,    // (title) => Promise<boolean>
+  refresh,       // () => Promise<void> - re-read from storage
+} = useKnowledgeStore();
+
+// Build a "My Notes" screen
+notes.map(note => <Text>{note.title} — {note.preview}</Text>);
+```
+
+Notes are stored as individual markdown files in app-local storage (`{app-dir}/gemma-agent-notes/`). Each note has YAML frontmatter (title, tags, created, modified) and markdown body. Storage is capped at 5 MB with a warning at 100 KB to keep system prompt injection performant.
 
 ## Creating Custom Skills
 
@@ -252,6 +332,7 @@ type SkillManifest = {
   version: string;
   type: 'native' | 'js';
   requiresNetwork?: boolean; // SDK checks connectivity before execution
+  category?: string;         // Skill category for grouping (v0.2.0)
   parameters: Record<string, SkillParameter>;
   requiredParameters?: string[];
   html?: string;             // Required for 'js' skills
@@ -260,19 +341,30 @@ type SkillManifest = {
 };
 ```
 
-## Built-in Demo Skills
+## Built-in Skills
 
-| Skill | Type | Network | Description |
-|---|---|---|---|
-| `calculatorSkill` | native | No | Evaluate math expressions (fully offline) |
-| `queryWikipediaSkill` | js | Yes | Search and summarize Wikipedia articles |
-| `webSearchSkill` | js | Yes | Web search via SearXNG |
-| `deviceLocationSkill` | native | No | GPS location with offline city lookup (60 cities) |
-| `readCalendarSkill` | native | No | Read device calendar events for any day |
+| Skill | Type | Network | Category | Description |
+|---|---|---|---|---|
+| `localNotesSkill` | native | No | memory | **On-device knowledge base** — save, search, recall notes |
+| `calculatorSkill` | native | No | utility | Evaluate math expressions (fully offline) |
+| `queryWikipediaSkill` | js | Yes | research | Search and summarize Wikipedia articles |
+| `webSearchSkill` | js | Yes | research | Web search via SearXNG |
+| `deviceLocationSkill` | native | No | device | GPS location with offline city lookup (60 cities) |
+| `readCalendarSkill` | native | No | device | Read device calendar events for any day |
 
 ```typescript
 // Core skills (no extra dependencies)
-import { calculatorSkill, queryWikipediaSkill, webSearchSkill } from 'react-native-gemma-agent/skills';
+import {
+  calculatorSkill,
+  queryWikipediaSkill,
+  webSearchSkill,
+  createLocalNotesSkill,  // v0.2.0 — needs a KnowledgeStore instance
+} from 'react-native-gemma-agent/skills';
+
+// Knowledge base setup
+import { KnowledgeStore } from 'react-native-gemma-agent';
+const store = new KnowledgeStore();
+const localNotesSkill = createLocalNotesSkill(store);
 
 // Device skills (require additional packages)
 import { deviceLocationSkill } from 'react-native-gemma-agent/skills/deviceLocation';
@@ -334,8 +426,9 @@ The agent can chain multiple skills in sequence (max depth configurable, default
 GemmaAgentProvider
   |-- ModelManager        (download, store, locate GGUF models)
   |-- InferenceEngine     (llama.rn wrapper, streaming, tool call passthrough)
-  |-- SkillRegistry       (register/manage skills, convert to OpenAI tool format)
+  |-- SkillRegistry       (register/manage skills, categories, convert to OpenAI tool format)
   |-- AgentOrchestrator   (agent loop: infer -> tool call -> skill exec -> re-invoke)
+  |-- KnowledgeStore      (on-device markdown notes with BM25 search)
   |-- SkillSandbox        (hidden WebView for JS skill execution)
   |-- BM25Scorer          (opt-in skill pre-filtering by query relevance)
 ```
@@ -368,6 +461,9 @@ Control agent behavior.
   systemPrompt: '...',             // Base system prompt
   skillRouting: 'all',             // 'all' or 'bm25'
   maxToolsPerInvocation: 5,        // Top-N skills per query (bm25 only)
+  activeCategories: ['utility'],   // Only load these skill categories (v0.2.0)
+  contextWarningThreshold: 0.8,    // Fire warning at 80% context usage (v0.2.0)
+  onContextWarning: (usage) => {}, // Callback when threshold crossed (v0.2.0)
 }
 ```
 
@@ -386,7 +482,7 @@ The model's "memory" is its **context window** — a rolling buffer of the curre
 - With 10 skills: ~700 tokens used, ~3400 left
 - With 30 skills: ~2100 tokens used, only ~2000 left for conversation
 
-**No persistent memory**: The model only remembers the current conversation. It does not remember across app restarts. If you need cross-session memory, build a native skill that persists notes to device storage and injects them into the system prompt.
+**Persistent memory via Knowledge Base** (v0.2.0): The `local_notes` skill gives the agent persistent memory across conversations and app restarts. Notes are stored on-device and their index is injected into the system prompt automatically. Without `local_notes`, the model only remembers the current conversation.
 
 **Increasing context**: You can set `contextSize: 8192` or higher. Gemma 4 E2B supports up to 128K. But more context means more RAM usage and slower prompt processing. On a phone with 8GB RAM, 4096-8192 is the sweet spot.
 
@@ -446,8 +542,9 @@ Any GGUF model compatible with llama.rn should work, but function calling (tool 
 - [x] BM25 skill routing (opt-in pre-filter)
 - [x] Network awareness (`requiresNetwork` flag on skills)
 - [x] GPS and calendar device skills
-- [ ] On-device knowledge base skill (persistent local notes)
-- [ ] Skill categories for grouping and selective loading
+- [x] On-device knowledge base — persistent AI memory via `local_notes` skill (v0.2.0)
+- [x] Skill categories for grouping and selective loading (v0.2.0)
+- [x] Context window warnings with configurable threshold (v0.2.0)
 - [ ] Semantic vector routing (embedding-based tool selection, 97%+ accuracy)
 - [ ] iOS support
 - [ ] TurboQuant KV cache (6x longer conversations)

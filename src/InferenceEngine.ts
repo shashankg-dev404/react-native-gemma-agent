@@ -47,6 +47,17 @@ export class InferenceEngine {
   private _isGenerating = false;
   private _lastPromptTokens = 0;
   private _lastPredictedTokens = 0;
+  /**
+   * Cumulative KV-cache fill across the current session. Grows as each
+   * generate() call processes new prompt tokens + predicts new output.
+   * Only reset via resetContextUsage() or unload().
+   *
+   * NOTE: `result.timings.prompt_n` from llama.rn is the number of tokens
+   * actually evaluated for the prompt on this call — i.e. the diff after
+   * KV cache reuse, not the total prompt length. See
+   * e2e/result_phase-17-context-warnings.md for the logcat evidence.
+   */
+  private _cumulativeUsed = 0;
 
   constructor(config?: InferenceEngineConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -181,6 +192,8 @@ export class InferenceEngine {
       const mapped = this.mapResult(result);
       this._lastPromptTokens = mapped.timings.promptTokens;
       this._lastPredictedTokens = mapped.timings.predictedTokens;
+      this._cumulativeUsed +=
+        mapped.timings.promptTokens + mapped.timings.predictedTokens;
       return mapped;
     } finally {
       this._isGenerating = false;
@@ -198,7 +211,8 @@ export class InferenceEngine {
   }
 
   /**
-   * Unload the model and free memory.
+   * Unload the model and free memory. Also zeroes context-usage tracking
+   * so a subsequent getContextUsage() reflects a fresh session.
    */
   async unload(): Promise<void> {
     if (this.context) {
@@ -207,6 +221,18 @@ export class InferenceEngine {
       this.modelInfo = null;
       this._isGenerating = false;
     }
+    this.resetContextUsage();
+  }
+
+  /**
+   * Zero the cumulative context-usage counter. Called by
+   * AgentOrchestrator.reset() when the user clears the conversation,
+   * and by unload(). Safe to call when no model is loaded.
+   */
+  resetContextUsage(): void {
+    this._lastPromptTokens = 0;
+    this._lastPredictedTokens = 0;
+    this._cumulativeUsed = 0;
   }
 
   /**
@@ -229,15 +255,15 @@ export class InferenceEngine {
   }
 
   /**
-   * Get current context window usage.
-   * Uses the last generation's prompt token count as an estimate of how
-   * much of the KV cache is filled. This is accurate when called right
-   * after generate() — the prompt tokens represent the full conversation
-   * history that was fed into the model.
+   * Get cumulative context-window usage for the current session.
+   * Grows monotonically as generate() calls process new prompt tokens
+   * (the diff after KV cache reuse) plus predicted output. Clamped to
+   * contextSize so `percent` never exceeds 100. Zeroes only when
+   * resetContextUsage() or unload() is called.
    */
   getContextUsage(): ContextUsage {
     const total = this.config.contextSize;
-    const used = this._lastPromptTokens + this._lastPredictedTokens;
+    const used = Math.min(this._cumulativeUsed, total);
     const percent = total > 0 ? Math.round((used / total) * 100) : 0;
     return { used, total, percent };
   }
@@ -289,7 +315,7 @@ export class InferenceEngine {
 
     return {
       text: result.text,
-      content: result.content ?? result.text,
+      content: result.content || result.text,
       reasoning: result.reasoning_content || null,
       toolCalls,
       timings,

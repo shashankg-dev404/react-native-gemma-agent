@@ -594,3 +594,107 @@ Steps + observed Logs tab events:
 2. Consider tweaking the example app's `SYSTEM_PROMPT` to nudge the model toward `local_notes` for personal recall (the "When is my flight?" gap is a UX concern users will hit).
 3. Optional: add a `read_calendar` polite-decline path so denied permission doesn't end the turn — let the model chain to the next-best tool.
 4. Update README with Knowledge Base section + `KnowledgeStore` + `local_notes` skill docs before tagging v0.2.0.
+
+---
+
+## Session — 2026-04-10 (Phase 17 — Context Warning Callback & Metrics)
+
+Proactive context-window monitoring shipped. Developers can now react to
+context pressure before the model starts truncating or throwing
+`contextFull`.
+
+### Changes
+- **`src/types.ts`** — Added `contextWarningThreshold` and `onContextWarning`
+  to `AgentConfig`; added `'context_warning'` variant to `AgentEvent`.
+- **`src/AgentOrchestrator.ts`** — After each `engine.generate()` call the
+  orchestrator checks `getContextUsage()` and fires `onContextWarning`
+  plus a `'context_warning'` event **once per threshold crossing**. The
+  flag resets on `orchestrator.reset()` so the warning can re-fire on
+  the next conversation. Callback errors are swallowed so developer
+  bugs cannot crash the agent loop. Also exposes a public
+  `getContextUsage()` pass-through.
+- **`src/useGemmaAgent.ts`** — Dispatches `context_warning` events into
+  the `contextUsage` state so React UIs get live updates. Added a
+  `resetConversation()` method that clears history **and** zeroes the
+  `contextUsage` state (the existing `reset()` stays as-is).
+- **`example/App.tsx`** — New `ContextUsageBar` component with
+  green (<60%) → yellow (60–80%) → red (>=80%) color coding, token
+  count label, and a flash warning banner when `context_warning` fires
+  (auto-dismisses after 5s). "Clear Chat" now calls
+  `resetConversation()`.
+
+### Tests
+- **`src/__tests__/AgentOrchestrator.test.ts`** — Extended
+  `MockInferenceEngine` with a per-call `pushUsage()` queue, then added
+  8 new tests: fires once at 80%, does not fire below threshold, does
+  not re-fire while still above, re-fires after `reset()`, honors
+  custom threshold (0.5), emits event even without a callback, swallows
+  callback errors, and a paired reset + re-fire case.
+- **113 tests passing** across 8 suites (up from 105). `npx tsc
+  --noEmit` is clean.
+
+### Files Modified This Session
+- `src/types.ts`
+- `src/AgentOrchestrator.ts`
+- `src/useGemmaAgent.ts`
+- `src/__tests__/AgentOrchestrator.test.ts`
+- `example/App.tsx`
+- `docs/PLAN.md` — Phase 13 + Phase 17 checkboxes completed
+
+### What to Pick Up Next
+1. ~~Phase 18 — v0.2.0 release prep~~ — Done in Session 2026-04-14.
+
+---
+
+## Session — 2026-04-14 (Phase 18 — v0.2.0 Release + Bug Fixes)
+
+### Bug Fixes (discovered during manual E2E testing)
+
+1. **`local_notes` skill missing from example app** — The skill existed in `skills/localNotes.ts` but wasn't imported or registered in `example/App.tsx`. Added import, created `KnowledgeStore` instance, registered skill (6 skills total), and passed store via `knowledgeStore` prop.
+
+2. **Chain-of-thought leaking into chat** — Gemma 4 2B was dumping its internal reasoning (numbered steps, tool evaluation) directly into the response text. Fixed by updating the system prompt in both `AgentOrchestrator.ts` (default) and `example/App.tsx` to instruct the model to respond directly without showing reasoning.
+
+3. **Empty response after tool calls** — When the model put its entire post-tool answer into thinking tokens (`reasoning_content`), the `content` field came back as `""`. Two fixes:
+   - `InferenceEngine.ts`: Changed `content: result.content ?? result.text` to `content: result.content || result.text` — `??` doesn't catch empty string.
+   - `AgentOrchestrator.ts`: Added fallback — if response is empty after tool execution (`depth > 1`), use the last tool result as the response text.
+
+4. **Tool definition token bloat** — `skillsToToolDefs()` was concatenating `description + instructions` into one field, adding ~30-50 tokens per tool. Removed `instructions` concatenation — the `description` alone is sufficient for tool selection.
+
+### Phase 18 — v0.2.0 Release Prep
+
+- Version bumped to `0.2.0` in `package.json` and `src/index.ts`
+- README updated:
+  - New "What's New in v0.2.0" section highlighting Knowledge Base, Skill Categories, Context Monitoring
+  - Quick Start updated with `local_notes` skill setup
+  - `useKnowledgeStore()` hook documented
+  - Built-in skills table updated (6 skills, with categories)
+  - `SkillManifest` reference updated with `category` field
+  - `AgentConfig` updated with new fields
+  - Architecture diagram updated with `KnowledgeStore`
+  - Roadmap updated (3 new items checked off)
+  - Context window section updated to reflect persistent memory via Knowledge Base
+- Created `CHANGELOG.md` with v0.2.0, v0.1.1, and v0.1.0 entries
+- Updated `docs/SESSION_LOG.md`
+- Updated `docs/PLAN.md` — Phase 18 tasks checked off
+
+### Files Created
+- `CHANGELOG.md`
+
+### Files Modified
+- `README.md` — v0.2.0 feature sections, API updates, knowledge base docs
+- `package.json` — version 0.2.0
+- `src/index.ts` — SDK_VERSION 0.2.0
+- `src/InferenceEngine.ts` — `||` fix for content fallback
+- `src/AgentOrchestrator.ts` — empty response fallback, system prompt, tool def trimming
+- `example/App.tsx` — local_notes skill registration, system prompt update
+- `docs/PLAN.md` — Phase 18 checked off
+- `docs/SESSION_LOG.md` — this entry
+
+### Test Results
+- 124 tests passing across 10 suites
+- TypeScript clean (0 errors)
+
+### What to Pick Up Next
+1. `npm publish` and `git tag v0.2.0` (Shashank to run manually)
+2. Record updated demo video showing Knowledge Base feature for LinkedIn
+3. Draft LinkedIn post for v0.2.0 launch (see `docs/LINKEDIN_CONTENT.md`)

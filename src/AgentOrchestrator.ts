@@ -2,6 +2,7 @@ import type {
   Message,
   AgentEvent,
   AgentConfig,
+  ContextUsage,
   SkillManifest,
   SkillResult,
 } from './types';
@@ -15,18 +16,23 @@ import {
   type ParsedToolCall,
 } from './FunctionCallParser';
 
-type ResolvedConfig = Required<Omit<AgentConfig, 'activeCategories'>> & {
+type ResolvedConfig = Required<
+  Omit<AgentConfig, 'activeCategories' | 'onContextWarning'>
+> & {
   activeCategories?: string[];
+  onContextWarning?: (usage: ContextUsage) => void;
 };
 
 const DEFAULT_CONFIG: ResolvedConfig = {
   maxChainDepth: 5,
   skillTimeout: 30_000,
   systemPrompt:
-    'You are a helpful AI assistant running on-device. Answer concisely and accurately.',
+    'You are a helpful AI assistant running on-device. Answer the user directly. Do not show reasoning steps or tool evaluation. Be concise.',
   skillRouting: 'all',
   maxToolsPerInvocation: 5,
   activeCategories: undefined,
+  contextWarningThreshold: 0.8,
+  onContextWarning: undefined,
 };
 
 export type SkillExecutor = (
@@ -44,6 +50,7 @@ export class AgentOrchestrator {
   private history: Message[] = [];
   private _isProcessing = false;
   private bm25: BM25Scorer = new BM25Scorer();
+  private _contextWarningFired = false;
 
   constructor(
     engine: InferenceEngine,
@@ -126,6 +133,9 @@ export class AgentOrchestrator {
           },
         );
 
+        // Check context usage after each generation — fire warning once per crossing
+        this.checkContextWarning(onEvent);
+
         // Check for tool calls — primary (llama.rn native) then fallback (text scan)
         let parsedCalls = validateToolCalls(result.toolCalls, this.registry);
         if (parsedCalls.length === 0 && result.text.trim()) {
@@ -134,7 +144,18 @@ export class AgentOrchestrator {
 
         // No tool calls → final response
         if (parsedCalls.length === 0) {
-          const responseText = result.content || result.text;
+          let responseText = (result.content || result.text).trim();
+
+          // If model produced only thinking tokens with no visible content
+          // after a tool call, synthesize from the last tool result
+          if (!responseText && depth > 1) {
+            const lastToolMsg = this.history
+              .slice()
+              .reverse()
+              .find((m) => m.role === 'tool');
+            responseText = lastToolMsg?.content || 'Done.';
+          }
+
           this.history = [
             ...this.history,
             { role: 'assistant', content: responseText },
@@ -221,6 +242,16 @@ export class AgentOrchestrator {
 
   reset(): void {
     this.history = [];
+    this._contextWarningFired = false;
+    this.engine.resetContextUsage();
+  }
+
+  /**
+   * Current context window usage from the inference engine.
+   * Reflects the most recent generation. Returns zeros before the first call.
+   */
+  getContextUsage(): ContextUsage {
+    return this.engine.getContextUsage();
   }
 
   setSystemPrompt(prompt: string): void {
@@ -233,6 +264,28 @@ export class AgentOrchestrator {
 
   getActiveCategories(): string[] | undefined {
     return this.config.activeCategories;
+  }
+
+  private checkContextWarning(
+    onEvent?: (event: AgentEvent) => void,
+  ): void {
+    if (this._contextWarningFired) {
+      return;
+    }
+    const usage = this.engine.getContextUsage();
+    if (usage.total <= 0) {
+      return;
+    }
+    const thresholdPct = this.config.contextWarningThreshold * 100;
+    if (usage.percent >= thresholdPct) {
+      this._contextWarningFired = true;
+      try {
+        this.config.onContextWarning?.(usage);
+      } catch {
+        // Swallow callback errors — never crash the agent loop
+      }
+      onEvent?.({ type: 'context_warning', usage });
+    }
   }
 
   private async buildSystemPrompt(): Promise<string> {
@@ -277,9 +330,7 @@ export class AgentOrchestrator {
       type: 'function' as const,
       function: {
         name: skill.name,
-        description:
-          skill.description +
-          (skill.instructions ? `\n${skill.instructions}` : ''),
+        description: skill.description,
         parameters: {
           type: 'object' as const,
           properties: skill.parameters,

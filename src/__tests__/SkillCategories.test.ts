@@ -108,6 +108,8 @@ class MockInferenceEngine {
     return { used: 30, total: 4096, percent: 1 };
   }
 
+  resetContextUsage = jest.fn();
+
   async stopGeneration() {}
   async unload() {}
   getInfo() {

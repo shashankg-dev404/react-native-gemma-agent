@@ -329,12 +329,12 @@ BM25 (Best Matching 25) is a term frequency / inverse document frequency algorit
   - Returns `{ used: number, total: number, percent: number }` in tokens
   - Uses last generation's prompt+predicted tokens as estimate
 - [x] Add `contextUsage` field to `UseGemmaAgentReturn` (from `useGemmaAgent()`)
-- [ ] Add `onContextWarning` callback to `AgentConfig` — fires when context usage exceeds threshold (default: 80%) _(planned for v0.2 — Phase 17)_
-- [ ] Expose in the example app's metrics bar _(planned for v0.2 — Phase 17)_
+- [x] Add `onContextWarning` callback to `AgentConfig` — fires when context usage exceeds threshold (default: 80%) _(delivered in Phase 17)_
+- [x] Expose in the example app's metrics bar _(delivered in Phase 17)_
 
 ### Exit Criteria
 - [x] Developer can query remaining context at any time
-- [ ] Warning fires before context fills up _(planned for v0.2 — Phase 17)_
+- [x] Warning fires before context fills up _(delivered in Phase 17)_
 
 ---
 
@@ -513,21 +513,21 @@ Agent: "Your flight is April 15th, Delta DL1234."
 > Proactive context window monitoring. Fires a callback when usage exceeds a configurable threshold. Exposes context usage in the example app's metrics bar.
 
 ### Tasks
-- [ ] Add `onContextWarning` callback to `AgentConfig`:
+- [x] Add `onContextWarning` callback to `AgentConfig`:
   ```typescript
   onContextWarning?: (usage: { used: number; total: number; percent: number }) => void;
   ```
-- [ ] Add `contextWarningThreshold` to `AgentConfig` (default: `0.8` = 80%)
-- [ ] Wire into `AgentOrchestrator.sendMessage()`:
+- [x] Add `contextWarningThreshold` to `AgentConfig` (default: `0.8` = 80%)
+- [x] Wire into `AgentOrchestrator.sendMessage()`:
   - After each generation, check `engine.getContextUsage()`
   - If `percent >= contextWarningThreshold`, fire `onContextWarning` once per threshold crossing (don't spam on every message)
   - Also emit an `'context_warning'` event through the existing event callback system
-- [ ] Add `contextUsage` to `useGemmaAgent()` return (already partially done — verify it updates after each message)
-- [ ] Update example app:
+- [x] Add `contextUsage` to `useGemmaAgent()` return (already partially done — verify it updates after each message)
+- [x] Update example app:
   - Show context usage bar in metrics section (green → yellow at 60% → red at 80%)
   - Show "Context: 2,048 / 4,096 tokens (50%)" label
   - Flash warning badge when `onContextWarning` fires
-- [ ] Add `resetConversation()` method to `useGemmaAgent()` — clears history to reclaim context (convenience for when warning fires)
+- [x] Add `resetConversation()` method to `useGemmaAgent()` — clears history to reclaim context (convenience for when warning fires)
 
 ### API
 ```typescript
@@ -543,18 +543,18 @@ Agent: "Your flight is April 15th, Delta DL1234."
 ```
 
 ### Exit Criteria
-- [ ] Warning fires exactly once when crossing threshold (not on every message after)
-- [ ] Warning does not fire if usage stays below threshold
-- [ ] Example app shows live context usage bar
-- [ ] `resetConversation()` clears history and resets context tracking
-- [ ] Event system emits `'context_warning'` event
+- [x] Warning fires exactly once when crossing threshold (not on every message after)
+- [x] Warning does not fire if usage stays below threshold
+- [x] Example app shows live context usage bar
+- [x] `resetConversation()` clears history and resets context tracking
+- [x] Event system emits `'context_warning'` event
 
 ### Tests
-- [ ] Unit: warning fires when crossing 80% threshold
-- [ ] Unit: warning does not re-fire on subsequent messages above threshold
-- [ ] Unit: warning fires again after reset + re-crossing
-- [ ] Unit: custom threshold (e.g., 0.5) works correctly
-- [ ] Unit: `resetConversation()` clears messages and context usage
+- [x] Unit: warning fires when crossing 80% threshold
+- [x] Unit: warning does not re-fire on subsequent messages above threshold
+- [x] Unit: warning fires again after reset + re-crossing
+- [x] Unit: custom threshold (e.g., 0.5) works correctly
+- [x] Unit: `resetConversation()` clears messages and context usage
 
 ---
 
@@ -563,22 +563,23 @@ Agent: "Your flight is April 15th, Delta DL1234."
 > Final test pass, version bump, publish.
 
 ### Tasks
-- [ ] Run full test suite (`npx jest`) — all existing + new tests pass
-- [ ] Update `README.md`:
-  - Add "Skill Categories" section with example
-  - Add "Knowledge Base" section with example
-  - Add "Context Monitoring" section
-  - Update API reference table
-- [ ] Version bump to `0.2.0` in `package.json`
-- [ ] Update `CHANGELOG.md` (create if not exists)
-- [ ] Build TypeScript (`npx tsc`)
+- [x] Run full test suite (`npx jest`) — 124 tests passing across 10 suites
+- [x] Update `README.md`:
+  - Add "What's New in v0.2.0" section (Knowledge Base, Skill Categories, Context Monitoring)
+  - Add `useKnowledgeStore()` hook docs
+  - Update built-in skills table (6 skills with categories)
+  - Update API reference (activeCategories, resetConversation, knowledgeStore prop)
+  - Update architecture diagram, roadmap, context window section
+- [x] Version bump to `0.2.0` in `package.json` and `src/index.ts`
+- [x] Create `CHANGELOG.md` (v0.2.0, v0.1.1, v0.1.0)
+- [x] Build TypeScript (`npx tsc`) — clean
 - [ ] Publish to npm
 - [ ] Tag `v0.2.0` release on GitHub
-- [ ] Update `docs/SESSION_LOG.md`
+- [x] Update `docs/SESSION_LOG.md`
 
 ### Exit Criteria
-- [ ] All tests pass (existing 60 + new ~25 = ~85 tests)
-- [ ] README documents all v0.2.0 features
+- [x] All tests pass (124 tests across 10 suites)
+- [x] README documents all v0.2.0 features
 - [ ] Published to npm as v0.2.0
 - [ ] GitHub release tagged
 

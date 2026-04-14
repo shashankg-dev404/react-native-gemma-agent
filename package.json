@@ -1,6 +1,6 @@
 {
   "name": "react-native-gemma-agent",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "React Native SDK for on-device AI agents powered by Google Gemma 4",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

@@ -2,6 +2,7 @@ import { AgentOrchestrator } from '../AgentOrchestrator';
 import { SkillRegistry } from '../SkillRegistry';
 import type {
   CompletionResult,
+  ContextUsage,
   Message,
   GenerateOptions,
   TokenEvent,
@@ -19,6 +20,11 @@ class MockInferenceEngine {
 
   private responses: CompletionResult[] = [];
   private callIndex = 0;
+  // Optional per-call context usage queue — if set, the orchestrator sees
+  // a different usage value after each generation. When empty, defaults
+  // to a static low usage value.
+  private usageQueue: Array<{ used: number; total: number; percent: number }> =
+    [];
   generateCallArgs: Array<{ messages: Message[]; options?: GenerateOptions }> =
     [];
 
@@ -43,6 +49,11 @@ class MockInferenceEngine {
     });
   }
 
+  pushUsage(percent: number, total = 4096): void {
+    const used = Math.round((percent / 100) * total);
+    this.usageQueue.push({ used, total, percent });
+  }
+
   async generate(
     messages: Message[],
     options?: GenerateOptions,
@@ -56,8 +67,22 @@ class MockInferenceEngine {
   }
 
   getContextUsage() {
+    // After each generate() the orchestrator calls this. Shift the next
+    // queued usage value. When the queue is empty, return the last value
+    // (so repeated reads after the final generation see the same number).
+    if (this.usageQueue.length > 0) {
+      // callIndex was already incremented in generate(); we want the
+      // entry corresponding to the MOST RECENT generation (callIndex - 1).
+      const idx = Math.min(this.callIndex - 1, this.usageQueue.length - 1);
+      if (idx < 0) {
+        return { used: 0, total: 4096, percent: 0 };
+      }
+      return this.usageQueue[idx];
+    }
     return { used: 30, total: 4096, percent: 1 };
   }
+
+  resetContextUsage = jest.fn();
 
   async stopGeneration() {}
   async unload() {}
@@ -425,6 +450,194 @@ describe('AgentOrchestrator', () => {
       expect(result).toBe('The answer is 6.');
       const toolMsg = orchestrator.conversation.find((m) => m.role === 'tool');
       expect(toolMsg?.content).toBe('6');
+    });
+  });
+
+  describe('context warning', () => {
+    it('fires onContextWarning once when crossing the default 80% threshold', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'reply', text: 'reply' });
+      engine.pushUsage(82);
+
+      const warnings: ContextUsage[] = [];
+      const orchestrator = makeOrchestrator(engine, [], {
+        onContextWarning: (usage: ContextUsage) => warnings.push(usage),
+      });
+
+      const events: AgentEvent[] = [];
+      await orchestrator.sendMessage('hello', (e) => events.push(e));
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].percent).toBe(82);
+      expect(events.filter((e) => e.type === 'context_warning')).toHaveLength(1);
+    });
+
+    it('does NOT fire when usage stays below threshold', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'reply', text: 'reply' });
+      engine.pushUsage(50);
+
+      const warnings: unknown[] = [];
+      const orchestrator = makeOrchestrator(engine, [], {
+        onContextWarning: () => warnings.push(1),
+      });
+
+      const events: AgentEvent[] = [];
+      await orchestrator.sendMessage('hello', (e) => events.push(e));
+
+      expect(warnings).toHaveLength(0);
+      expect(events.some((e) => e.type === 'context_warning')).toBe(false);
+    });
+
+    it('does not re-fire on subsequent messages while still above threshold', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'first', text: 'first' });
+      engine.pushResponse({ content: 'second', text: 'second' });
+      engine.pushResponse({ content: 'third', text: 'third' });
+      engine.pushUsage(85);
+      engine.pushUsage(90);
+      engine.pushUsage(95);
+
+      const warnings: unknown[] = [];
+      const orchestrator = makeOrchestrator(engine, [], {
+        onContextWarning: () => warnings.push(1),
+      });
+
+      await orchestrator.sendMessage('one');
+      await orchestrator.sendMessage('two');
+      await orchestrator.sendMessage('three');
+
+      // Only the first crossing counts
+      expect(warnings).toHaveLength(1);
+    });
+
+    it('re-fires after reset() + re-crossing threshold', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'first', text: 'first' });
+      engine.pushResponse({ content: 'second', text: 'second' });
+      engine.pushUsage(85);
+      engine.pushUsage(81);
+
+      const warnings: unknown[] = [];
+      const orchestrator = makeOrchestrator(engine, [], {
+        onContextWarning: () => warnings.push(1),
+      });
+
+      await orchestrator.sendMessage('one');
+      expect(warnings).toHaveLength(1);
+
+      orchestrator.reset();
+      await orchestrator.sendMessage('two');
+
+      // Warning should fire a second time after reset
+      expect(warnings).toHaveLength(2);
+    });
+
+    it('honors a custom threshold (e.g. 0.5)', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'reply', text: 'reply' });
+      engine.pushUsage(55);
+
+      const warnings: unknown[] = [];
+      const orchestrator = makeOrchestrator(engine, [], {
+        contextWarningThreshold: 0.5,
+        onContextWarning: () => warnings.push(1),
+      });
+
+      await orchestrator.sendMessage('hello');
+      expect(warnings).toHaveLength(1);
+    });
+
+    it('reset() clears context warning state and allows re-firing', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'a', text: 'a' });
+      engine.pushResponse({ content: 'b', text: 'b' });
+      engine.pushUsage(85);
+      engine.pushUsage(85);
+
+      let fired = 0;
+      const orchestrator = makeOrchestrator(engine, [], {
+        onContextWarning: () => {
+          fired++;
+        },
+      });
+
+      await orchestrator.sendMessage('first');
+      expect(fired).toBe(1);
+
+      // Without reset, a second message above threshold should NOT re-fire
+      // (but mock only has one usage entry — emulate by pushing another).
+      // Instead verify reset path:
+      orchestrator.reset();
+      expect(orchestrator.conversation).toHaveLength(0);
+
+      await orchestrator.sendMessage('second');
+      expect(fired).toBe(2);
+    });
+
+    it('emits context_warning event even without callback', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'reply', text: 'reply' });
+      engine.pushUsage(81);
+
+      const orchestrator = makeOrchestrator(engine, []);
+      const events: AgentEvent[] = [];
+      await orchestrator.sendMessage('hi', (e) => events.push(e));
+
+      const warning = events.find((e) => e.type === 'context_warning');
+      expect(warning).toBeDefined();
+      if (warning && warning.type === 'context_warning') {
+        expect(warning.usage.percent).toBe(81);
+      }
+    });
+
+    it('swallows errors thrown by onContextWarning callback', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'reply', text: 'reply' });
+      engine.pushUsage(90);
+
+      const orchestrator = makeOrchestrator(engine, [], {
+        onContextWarning: () => {
+          throw new Error('callback boom');
+        },
+      });
+
+      // sendMessage should still resolve normally
+      const result = await orchestrator.sendMessage('hi');
+      expect(result).toBe('reply');
+    });
+
+    it('fires the 80% warning only when cumulative usage crosses the threshold', async () => {
+      // Simulates cumulative KV-cache growth across three turns:
+      // the warning must not fire on the 40% or 60% reads, only on 82%.
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'a', text: 'a' });
+      engine.pushResponse({ content: 'b', text: 'b' });
+      engine.pushResponse({ content: 'c', text: 'c' });
+      engine.pushUsage(40);
+      engine.pushUsage(60);
+      engine.pushUsage(82);
+
+      const fires: ContextUsage[] = [];
+      const orchestrator = makeOrchestrator(engine, [], {
+        onContextWarning: (usage: ContextUsage) => fires.push(usage),
+      });
+
+      await orchestrator.sendMessage('one');
+      expect(fires).toHaveLength(0);
+      await orchestrator.sendMessage('two');
+      expect(fires).toHaveLength(0);
+      await orchestrator.sendMessage('three');
+      expect(fires).toHaveLength(1);
+      expect(fires[0].percent).toBe(82);
+    });
+
+    it('reset() propagates to engine.resetContextUsage()', async () => {
+      const engine = new MockInferenceEngine();
+      const orchestrator = makeOrchestrator(engine, []);
+
+      orchestrator.reset();
+      expect(engine.resetContextUsage).toHaveBeenCalledTimes(1);
     });
   });
 });

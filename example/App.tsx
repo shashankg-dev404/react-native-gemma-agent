@@ -26,6 +26,8 @@ import { queryWikipediaSkill } from '../skills/queryWikipedia';
 import { webSearchSkill } from '../skills/webSearch';
 import { deviceLocationSkill } from '../skills/deviceLocation';
 import { readCalendarSkill } from '../skills/readCalendar';
+import { createLocalNotesSkill } from '../skills/localNotes';
+import { KnowledgeStore } from '../src/KnowledgeStore';
 
 // --- Config ---
 
@@ -35,7 +37,10 @@ const MODEL_CONFIG: ModelConfig = {
   expectedSize: 3_110_000_000,
 };
 
-const SYSTEM_PROMPT = `You are a helpful AI assistant running entirely on-device via Gemma 4. Answer concisely and accurately. When you need factual information, calculations, or current data, use the tools available to you.`;
+const SYSTEM_PROMPT = `You are a helpful AI assistant running entirely on-device via Gemma 4. Answer the user directly and concisely. Do not show reasoning steps or tool evaluation. Use the tools available to you when needed.`;
+
+const knowledgeStore = new KnowledgeStore();
+const localNotesSkill = createLocalNotesSkill(knowledgeStore);
 
 const ALL_SKILLS = [
   calculatorSkill,
@@ -43,6 +48,7 @@ const ALL_SKILLS = [
   webSearchSkill,
   deviceLocationSkill,
   readCalendarSkill,
+  localNotesSkill,
 ];
 
 // --- App Entry ---
@@ -54,6 +60,7 @@ export default function App() {
         model={MODEL_CONFIG}
         skills={ALL_SKILLS}
         systemPrompt={SYSTEM_PROMPT}
+        knowledgeStore={knowledgeStore}
       >
         <ChatScreen />
       </GemmaAgentProvider>
@@ -79,9 +86,10 @@ function ChatScreen() {
     modelStatus,
     activeSkill,
     error,
+    contextUsage,
     loadModel,
     unloadModel,
-    reset,
+    resetConversation,
   } = useGemmaAgent();
 
   const {
@@ -97,6 +105,7 @@ function ChatScreen() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadTimeMs, setLoadTimeMs] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'chat' | 'logs'>('chat');
+  const [contextWarningFlash, setContextWarningFlash] = useState(false);
 
   const chatScrollRef = useRef<ScrollView>(null);
   const logScrollRef = useRef<ScrollView>(null);
@@ -189,6 +198,14 @@ function ChatScreen() {
               }`,
               'skill',
             );
+            break;
+          case 'context_warning':
+            addLog(
+              `Context window ${event.usage.percent}% full (${event.usage.used}/${event.usage.total}). Consider clearing chat.`,
+              'error',
+            );
+            setContextWarningFlash(true);
+            setTimeout(() => setContextWarningFlash(false), 5000);
             break;
           case 'error':
             addLog(`Error: ${event.error}`, 'error');
@@ -298,7 +315,8 @@ function ChatScreen() {
             <TouchableOpacity
               style={styles.btnSmall}
               onPress={() => {
-                reset();
+                resetConversation();
+                setContextWarningFlash(false);
                 addLog('Conversation reset', 'info');
               }}
             >
@@ -315,6 +333,16 @@ function ChatScreen() {
               <Text style={styles.btnSmallText}>Unload</Text>
             </TouchableOpacity>
           </View>
+        )}
+
+        {/* Context Usage Bar */}
+        {showChat && contextUsage.total > 0 && (
+          <ContextUsageBar
+            used={contextUsage.used}
+            total={contextUsage.total}
+            percent={contextUsage.percent}
+            flash={contextWarningFlash}
+          />
         )}
 
         {/* Tab Bar */}
@@ -479,6 +507,46 @@ function MetricBadge({
   );
 }
 
+function ContextUsageBar({
+  used,
+  total,
+  percent,
+  flash,
+}: {
+  used: number;
+  total: number;
+  percent: number;
+  flash: boolean;
+}) {
+  // Green < 60%, yellow 60-80%, red ≥ 80%
+  const fillColor =
+    percent >= 80 ? '#E53935' : percent >= 60 ? '#FFC107' : '#4CAF50';
+  const clampedWidth = `${Math.min(100, Math.max(0, percent))}%` as const;
+  return (
+    <View style={[styles.contextBarContainer, flash && styles.contextBarFlash]}>
+      <View style={styles.contextBarLabelRow}>
+        <Text style={styles.contextBarLabel}>Context</Text>
+        <Text style={[styles.contextBarValue, { color: fillColor }]}>
+          {used.toLocaleString()} / {total.toLocaleString()} tokens ({percent}%)
+        </Text>
+      </View>
+      <View style={styles.contextBarTrack}>
+        <View
+          style={[
+            styles.contextBarFill,
+            { width: clampedWidth, backgroundColor: fillColor },
+          ]}
+        />
+      </View>
+      {flash && (
+        <Text style={styles.contextBarWarning}>
+          Context window filling up — consider Clear Chat
+        </Text>
+      )}
+    </View>
+  );
+}
+
 const LOG_COLORS: Record<LogEntry['type'], string> = {
   info: '#888',
   error: '#FF6B6B',
@@ -533,6 +601,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#64B5F6',
+  },
+  contextBarContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  contextBarFlash: {
+    backgroundColor: '#3a1d1d',
+    borderRadius: 6,
+    marginHorizontal: 12,
+    paddingHorizontal: 10,
+  },
+  contextBarLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  contextBarLabel: {
+    fontSize: 10,
+    color: '#888',
+    textTransform: 'uppercase',
+    fontWeight: '600',
+  },
+  contextBarValue: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  contextBarTrack: {
+    height: 4,
+    backgroundColor: '#16213e',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  contextBarFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  contextBarWarning: {
+    color: '#FF6B6B',
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: '600',
   },
   controls: {
     paddingHorizontal: 16,

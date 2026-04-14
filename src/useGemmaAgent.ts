@@ -34,6 +34,13 @@ export type UseGemmaAgentReturn = {
   unloadModel: () => Promise<void>;
   /** Clear conversation history */
   reset: () => void;
+  /**
+   * Clear conversation history and reset context-usage tracking.
+   * Use this when `onContextWarning` fires to reclaim the context window.
+   * Equivalent to `reset()` but additionally zeroes the `contextUsage` state
+   * so the warning can re-fire on the next threshold crossing.
+   */
+  resetConversation: () => void;
 };
 
 export function useGemmaAgent(): UseGemmaAgentReturn {
@@ -99,8 +106,14 @@ export function useGemmaAgent(): UseGemmaAgentReturn {
 
   const unloadModel = useCallback(async () => {
     await engine.unload();
+    orchestrator.reset();
+    setMessages([]);
+    setStreamingText('');
+    setError(null);
+    setActiveSkill(null);
+    setContextUsage({ used: 0, total: 0, percent: 0 });
     setModelStatus(modelManager.modelPath ? 'ready' : 'not_downloaded');
-  }, [engine, modelManager]);
+  }, [engine, orchestrator, modelManager]);
 
   const sendMessage = useCallback(
     async (
@@ -174,6 +187,9 @@ export function useGemmaAgent(): UseGemmaAgentReturn {
               case 'skill_result':
                 setActiveSkill(null);
                 break;
+              case 'context_warning':
+                setContextUsage(event.usage);
+                break;
               case 'error':
                 setError(event.error);
                 break;
@@ -215,6 +231,15 @@ export function useGemmaAgent(): UseGemmaAgentReturn {
     setActiveSkill(null);
   }, [orchestrator]);
 
+  const resetConversation = useCallback(() => {
+    orchestrator.reset();
+    setMessages([]);
+    setStreamingText('');
+    setError(null);
+    setActiveSkill(null);
+    setContextUsage({ used: 0, total: 0, percent: 0 });
+  }, [orchestrator]);
+
   return {
     sendMessage,
     messages,
@@ -230,5 +255,6 @@ export function useGemmaAgent(): UseGemmaAgentReturn {
     loadModel,
     unloadModel,
     reset,
+    resetConversation,
   };
 }
