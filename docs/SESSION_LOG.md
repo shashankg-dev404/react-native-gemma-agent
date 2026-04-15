@@ -1237,3 +1237,88 @@ Rules (carry-forward):
 - MIT attribution comment at top of `createGemmaProvider.ts` citing ai-sdk.ts:1089–1158 ("inspire only").
 - One commit at the end of 19.5.
 
+---
+
+## Session — 2026-04-16 (Phase 19.5 — createGemmaProvider + consumer-tool coexistence + knowledgeStore wiring)
+
+### Decisions up front (both recommended by planner, approved by user)
+
+- **Decision 1 — consumer-tool coexistence:** Option A. Extend `runToolLoop` with an optional `extraTools?: ToolDefinition[]`. Behaviour when undefined is byte-for-byte identical to the pre-19.5 loop; existing `AgentOrchestrator.sendMessage` doesn't pass it and is untouched by the contract change. This honors ADR-006's `RunToolLoopInput.extraTools` shape (lines 242–246) and the ADR's "skills + consumer" matrix row (line 317).
+- **Decision 2 — knowledgeStore splice:** Option B. Extract `AgentOrchestrator.buildSystemPrompt`'s notes splice into a shared `src/buildSystemPrompt.ts` helper (`buildSystemPromptWithNotes(basePrompt, registry, store)`). Both the orchestrator and the adapter call it. Avoids drift between the two code paths — the model-facing notes block is a contract, not an implementation detail.
+
+### What landed
+
+**Phase 19.5 — DONE**
+
+- `src/buildSystemPrompt.ts` — new. Pure helper: returns `basePrompt` unchanged when no knowledge store or no `local_notes` skill or empty index; otherwise appends the `<!-- notes-start -->` / `<!-- notes-end -->` block exactly as `AgentOrchestrator.buildSystemPrompt` did before.
+- `src/AgentOrchestrator.ts` — `buildSystemPrompt()` now delegates to `buildSystemPromptWithNotes()`. Ten inlined lines replaced with a single call. Behaviour unchanged; all 18 orchestrator tests stay green.
+- `src/runToolLoop.ts` — `RunToolLoopInput` gains `extraTools?: ToolDefinition[]`. Inside the loop:
+  - Tool list sent to the engine is `[...skillTools, ...extraTools]`.
+  - `validateToolCalls` / `extractToolCallsFromText` now accept an `extraToolNames: Set<string>` option; calls whose name is in the set but not a registered skill return with `isConsumerTool: true, skill: null`.
+  - When any parsed call has `isConsumerTool: true`, the loop emits `tool-input-start` + `tool-call` (both with `providerExecuted: false`), pushes the assistant-with-tool_calls message into `finalMessages`, and returns with `finishReason: 'tool-calls'`. No `tool-result` — consumer executes downstream.
+  - Provider-executed skill path is byte-for-byte unchanged. Skills still win on collision at the call site (via `separateProviderAndConsumerTools`).
+- `src/FunctionCallParser.ts` — `ParsedToolCall.skill` is now `SkillManifest | null` and gains `isConsumerTool?: boolean`. Both parsers accept an optional `{ extraToolNames?: Set<string> }` options bag. Default behaviour (no options passed) is unchanged — existing callers see zero diff.
+- `src/ai/GemmaLanguageModel.ts`:
+  - `GemmaLanguageModelConfig` gains `knowledgeStore?: KnowledgeStore | null`. Stored on the instance.
+  - `prepareCall` is now `async` — it awaits `buildSystemPromptWithNotes()` before constructing `RunToolLoopInput`. `doGenerate` / `doStream` await the prelude.
+  - Consumer-tool drop-with-warning (19.4's Option B) replaced with `extraTools: consumerTools.length > 0 ? consumerTools : undefined` passthrough. Collision-warning path (skill-wins) is unchanged; provider-tool drop warning is unchanged; `toolChoice` downgrade warnings unchanged; context-threshold warning unchanged.
+  - `GemmaProviderOptions` is now exported.
+- `src/ai/createGemmaProvider.ts` — new. Callable-provider factory:
+  - `provider(modelId?, opts?)` and `provider.languageModel(modelId?, opts?)` both return a fresh `GemmaLanguageModel`. Per-model opts shallow-merge over provider defaults.
+  - `engine` required; throws with a clear error message otherwise.
+  - `registry` defaults to a fresh `SkillRegistry` when omitted (consumer passes nothing → empty skill set, no magic).
+  - `knowledgeStore`, `skillExecutor`, `systemPrompt`, `defaults` all forwarded to every model.
+- `src/ai/index.ts` — subpath entry now re-exports `createGemmaProvider`, `GemmaProvider`, `GemmaProviderConfig`, `GemmaLanguageModel`, `GemmaLanguageModelConfig`, `GemmaLanguageModelDefaults`, `GemmaProviderOptions`, plus the translation helpers (`convertFinishReason`, `prepareMessages`, `skillResultToToolOutput`, `v3ToolToToolDefinition`, `separateProviderAndConsumerTools`). Consumers now reach the full Phase 19 surface via `import { createGemmaProvider } from 'react-native-gemma-agent/ai'`.
+- Tests:
+  - `src/__tests__/createGemmaProvider.test.ts` — new file, 21 tests: factory shape (6), consumer-tool coexistence (5), knowledgeStore wiring (4), providerOptions passthrough (4), subpath index re-exports (1), plus `GemmaLanguageModel` identity checks. Uses a local `MockInferenceEngine` matching the 19.4 test fixture.
+  - `src/__tests__/FunctionCallParser.test.ts` — +3 tests for the `extraToolNames` option covering the new `isConsumerTool` marker and skill-over-consumer precedence.
+  - `src/__tests__/GemmaLanguageModel.test.ts` — the 19.4 "drops consumer tools" assertion rewritten to assert coexistence instead (tool list sent to engine includes both `calculator` skill and `external_api` consumer tool).
+- 196/196 tests green across 16 suites (172 pre-19.5 + 24 new). `npx tsc --noEmit` clean.
+
+### Dev-facing contract guarantees
+
+- No breaking change for existing `useGemmaAgent` consumers. `AgentOrchestrator.sendMessage` never passes `extraTools`, `runToolLoop` falls through the original skill-only path.
+- `runToolLoop`'s new parameter is strictly optional. Any downstream caller reading `ParsedToolCall.skill` must now handle `null`, but `runToolLoop` is the only known caller and it guards `executeSkill` explicitly.
+- `GemmaLanguageModel` still accepts the same 19.4 config shape; `knowledgeStore` is optional.
+- Subpath `react-native-gemma-agent/ai` remains a pure additive export. Main entry unchanged.
+
+### Deferred to Phase 19.6
+
+- `ModelManager` auto-wire into `prepare()` (currently still throws when engine isn't loaded). Decision: leave as-is until the example-app tab lands in 19.6 — couples better to the real download flow than to a factory-level fake.
+
+### Files Created
+- `src/buildSystemPrompt.ts`
+- `src/ai/createGemmaProvider.ts`
+- `src/__tests__/createGemmaProvider.test.ts`
+
+### Files Modified
+- `src/runToolLoop.ts` — `extraTools` wiring, consumer-call short-circuit
+- `src/FunctionCallParser.ts` — `extraToolNames` option, `isConsumerTool` marker, `skill: SkillManifest | null`
+- `src/AgentOrchestrator.ts` — delegate to `buildSystemPromptWithNotes`
+- `src/ai/GemmaLanguageModel.ts` — `knowledgeStore` config, async `prepareCall`, consumer-tool passthrough
+- `src/ai/index.ts` — full subpath exports
+- `src/__tests__/GemmaLanguageModel.test.ts` — coexistence assertion replaces drop assertion
+- `src/__tests__/FunctionCallParser.test.ts` — +3 `extraToolNames` tests
+- `docs/SESSION_LOG.md` — this entry
+
+### Next Session — Start Here
+
+**Pick up at Phase 19.6 (example app `useChat()` tab + migration docs).**
+
+Phase 19.6 task list (from ADR-006 §"Integration — useChat() in example app" and PLAN.md:41):
+1. Add `react-native-ai` + `@ai-sdk/react` (or equivalent) to `example/package.json` as dev deps.
+2. New tab in `example/App.tsx` that imports `createGemmaProvider` from `react-native-gemma-agent/ai`, instantiates with the example app's `InferenceEngine` + `SkillRegistry` (all 6 skills), mounts the `SkillSandbox` executor, and calls `useChat({ transport: ... })` over `streamText({ model: provider() })`.
+3. Exercise the full matrix on-device: plain text, skill turn, chained skills, abort mid-stream, `providerOptions.gemma.skillRouting: 'bm25'`, a consumer tool with an `execute` callback (should round-trip the tool-result back into the loop via the next `sendMessage`).
+4. `ModelManager` wire-through in `GemmaLanguageModel.prepare()` — `prepare(modelPath?)` triggers `engine.loadModel(path)` when not already loaded. Currently `prepare()` only validates.
+5. Docs:
+   - `docs/MIGRATION_AI_SDK.md` — migration from `@react-native-ai/llama` and `react-native-executorch`. Cover the three day-one fixes (tool-input-* streaming, `inputSchema → parameters`, `abortSignal`), provider-executed skill semantics, `providerOptions.gemma` surface, `providerMetadata.gemma` shape.
+   - README snippet under "Usage" showing the AI-SDK path alongside `useGemmaAgent`.
+6. On-device acceptance per CLAUDE.md rule 6 (Android). Record a LinkedIn demo if the chained skills flow reads cleanly (per CLAUDE.md rule 9).
+
+Rules (carry-forward):
+- ADR-006 is the spec. Phase 19.6 is the first phase that ships user-visible behaviour.
+- No new SDK deps; example app may add `ai` + `@ai-sdk/react`.
+- `src/runToolLoop.ts`, `src/AgentOrchestrator.ts`, `src/InferenceEngine.ts`, `src/types.ts`, `src/SkillRegistry.ts` — ask before touching.
+- All 196 existing tests stay green.
+- One commit per 19.6 sub-task if the diff is large (example app changes + SDK changes + docs should split cleanly).
+

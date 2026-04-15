@@ -317,10 +317,10 @@ describe('GemmaLanguageModel', () => {
     ).toBe(true);
   });
 
-  it('drops consumer tools with a stream-start warning (Option B — provider-executed skills only)', async () => {
+  it('forwards consumer tools to the engine alongside provider-executed skills', async () => {
     const engine = new MockInferenceEngine();
     engine.pushResponse({ text: 'hi', content: 'hi' });
-    const model = makeModel(engine, []);
+    const model = makeModel(engine, [calcSkill]);
 
     const consumerTool: LanguageModelV3FunctionTool = {
       type: 'function',
@@ -336,23 +336,13 @@ describe('GemmaLanguageModel', () => {
       prompt: userPrompt('hi'),
       tools: [consumerTool],
     });
-    const parts = await collectStream(stream);
-
-    const start = parts[0] as Extract<
-      LanguageModelV3StreamPart,
-      { type: 'stream-start' }
-    >;
-    expect(
-      start.warnings.some(
-        (w) =>
-          w.type === 'other' &&
-          w.message.includes('external_api') &&
-          w.message.includes('skill'),
-      ),
-    ).toBe(true);
+    await collectStream(stream);
 
     const tools = engine.generateCallArgs[0].options?.tools;
-    expect(tools).toBeUndefined();
+    expect(tools).toBeDefined();
+    const names = tools!.map((t) => t.function.name);
+    expect(names).toContain('calculator');
+    expect(names).toContain('external_api');
   });
 
   it('warns and drops consumer tool when name collides with a registered skill', async () => {
