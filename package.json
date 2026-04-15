@@ -6,6 +6,19 @@
   "types": "lib/index.d.ts",
   "react-native": "src/index.ts",
   "source": "src/index.ts",
+  "exports": {
+    ".": {
+      "react-native": "./src/index.ts",
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./ai": {
+      "react-native": "./src/ai/index.ts",
+      "types": "./lib/ai/index.d.ts",
+      "default": "./lib/ai/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "src",
     "lib",
@@ -35,11 +48,17 @@
   "author": "Shashank Gupta",
   "license": "MIT",
   "peerDependencies": {
+    "@ai-sdk/provider": "^3.0.0",
     "llama.rn": ">=0.12.0-rc.3",
     "react": ">=18.0.0",
     "react-native": ">=0.76.0",
     "react-native-fs": ">=2.20.0",
     "react-native-webview": ">=13.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@ai-sdk/provider": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
