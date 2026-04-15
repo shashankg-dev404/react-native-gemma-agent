@@ -170,6 +170,9 @@ export class InferenceEngine {
         top_p: options?.topP ?? DEFAULT_GENERATE.topP,
         top_k: options?.topK ?? DEFAULT_GENERATE.topK,
         stop: options?.stop ?? ['<end_of_turn>', '<eos>'],
+        jinja: true,
+        enable_thinking: false,
+        reasoning_format: 'none',
       };
 
       if (options?.tools && options.tools.length > 0) {
