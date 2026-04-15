@@ -155,3 +155,50 @@ describe('extractToolCallsFromText', () => {
     expect(parsed).toHaveLength(2);
   });
 });
+
+describe('extraToolNames — consumer-tool marker', () => {
+  it('validateToolCalls flags unknown names listed in extraToolNames as consumer tools', () => {
+    const registry = makeRegistry();
+    const toolCalls: ToolCall[] = [
+      {
+        type: 'function',
+        id: 'call_0',
+        function: { name: 'weather', arguments: '{"city":"Paris"}' },
+      },
+    ];
+    const parsed = validateToolCalls(toolCalls, registry, {
+      extraToolNames: new Set(['weather']),
+    });
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].name).toBe('weather');
+    expect(parsed[0].isConsumerTool).toBe(true);
+    expect(parsed[0].skill).toBeNull();
+  });
+
+  it('validateToolCalls prefers skill over consumer tool when both match', () => {
+    const registry = makeRegistry();
+    const toolCalls: ToolCall[] = [
+      {
+        type: 'function',
+        function: { name: 'calculator', arguments: '{"expression":"2+2"}' },
+      },
+    ];
+    const parsed = validateToolCalls(toolCalls, registry, {
+      extraToolNames: new Set(['calculator']),
+    });
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].isConsumerTool).toBeUndefined();
+    expect(parsed[0].skill?.name).toBe('calculator');
+  });
+
+  it('extractToolCallsFromText flags unknown names listed in extraToolNames', () => {
+    const registry = makeRegistry();
+    const text = '{"tool_call": {"name": "weather", "parameters": {"city": "NYC"}}}';
+    const parsed = extractToolCallsFromText(text, registry, {
+      extraToolNames: new Set(['weather']),
+    });
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].isConsumerTool).toBe(true);
+    expect(parsed[0].skill).toBeNull();
+  });
+});

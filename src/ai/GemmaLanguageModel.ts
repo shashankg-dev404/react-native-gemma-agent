@@ -17,6 +17,7 @@ import type {
 } from '@ai-sdk/provider';
 import type { InferenceEngine } from '../InferenceEngine';
 import type { SkillRegistry } from '../SkillRegistry';
+import type { KnowledgeStore } from '../KnowledgeStore';
 import type {
   RunToolLoopConfig,
   RunToolLoopInput,
@@ -24,6 +25,7 @@ import type {
   SkillExecutor,
 } from '../runToolLoop';
 import { runToolLoop } from '../runToolLoop';
+import { buildSystemPromptWithNotes } from '../buildSystemPrompt';
 import { prepareMessages } from './prepareMessages';
 import { separateProviderAndConsumerTools } from './toolShapeBridge';
 import {
@@ -49,11 +51,12 @@ export type GemmaLanguageModelConfig = {
   engine: InferenceEngine;
   registry: SkillRegistry;
   executor?: SkillExecutor | null;
+  knowledgeStore?: KnowledgeStore | null;
   systemPrompt?: string;
   defaults?: GemmaLanguageModelDefaults;
 };
 
-type GemmaProviderOptions = {
+export type GemmaProviderOptions = {
   activeCategories?: string[];
   skillRouting?: 'all' | 'bm25';
   maxToolsPerInvocation?: number;
@@ -83,6 +86,7 @@ export class GemmaLanguageModel implements LanguageModelV3 {
   private engine: InferenceEngine;
   private registry: SkillRegistry;
   private executor: SkillExecutor | null;
+  private knowledgeStore: KnowledgeStore | null;
   private systemPrompt: string;
   private defaults: Required<GemmaLanguageModelDefaults>;
 
@@ -91,6 +95,7 @@ export class GemmaLanguageModel implements LanguageModelV3 {
     this.engine = config.engine;
     this.registry = config.registry;
     this.executor = config.executor ?? null;
+    this.knowledgeStore = config.knowledgeStore ?? null;
     this.systemPrompt = config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.defaults = {
       maxChainDepth: config.defaults?.maxChainDepth ?? DEFAULTS.maxChainDepth,
@@ -122,7 +127,7 @@ export class GemmaLanguageModel implements LanguageModelV3 {
   async doGenerate(
     options: LanguageModelV3CallOptions,
   ): Promise<LanguageModelV3GenerateResult> {
-    const prelude = this.prepareCall(options);
+    const prelude = await this.prepareCall(options);
     const parts: RunToolLoopPart[] = [];
 
     const abortCleanup = this.wireAbort(options.abortSignal);
@@ -160,7 +165,7 @@ export class GemmaLanguageModel implements LanguageModelV3 {
   async doStream(
     options: LanguageModelV3CallOptions,
   ): Promise<LanguageModelV3StreamResult> {
-    const prelude = this.prepareCall(options);
+    const prelude = await this.prepareCall(options);
     const engine = this.engine;
     const registry = this.registry;
     const executor = this.executor;
@@ -205,11 +210,11 @@ export class GemmaLanguageModel implements LanguageModelV3 {
     return { stream };
   }
 
-  private prepareCall(options: LanguageModelV3CallOptions): {
+  private async prepareCall(options: LanguageModelV3CallOptions): Promise<{
     config: RunToolLoopConfig;
     input: RunToolLoopInput;
     warnings: SharedV3Warning[];
-  } {
+  }> {
     const { messages, warnings: prepareWarnings } = prepareMessages(
       options.prompt,
     );
@@ -232,16 +237,10 @@ export class GemmaLanguageModel implements LanguageModelV3 {
       (options.providerOptions?.gemma as GemmaProviderOptions | undefined) ??
       {};
 
-    const consumerToolWarnings = consumerTools.map(
-      (t) =>
-        `Consumer tool "${t.function.name}" dropped — only provider-executed skills are supported in this release. Register the tool as a skill via SkillRegistry to run it.`,
-    );
-
     const warnings: string[] = [
       ...prepareWarnings,
       ...providerToolWarnings,
       ...collisionWarnings,
-      ...consumerToolWarnings,
     ];
 
     const contextUsage = this.engine.getContextUsage();
@@ -278,11 +277,17 @@ export class GemmaLanguageModel implements LanguageModelV3 {
     };
 
     const query = extractLatestUserQuery(options.prompt);
+    const systemPrompt = await buildSystemPromptWithNotes(
+      this.systemPrompt,
+      this.registry,
+      this.knowledgeStore,
+    );
 
     const input: RunToolLoopInput = {
-      systemPrompt: this.systemPrompt,
+      systemPrompt,
       messages,
       query,
+      extraTools: consumerTools.length > 0 ? consumerTools : undefined,
     };
 
     return { config, input, warnings: toV3Warnings(warnings) };

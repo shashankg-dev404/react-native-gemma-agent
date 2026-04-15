@@ -98,6 +98,14 @@ export type RunToolLoopInput = {
   systemPrompt: string;
   messages: Message[];
   query: string;
+  /**
+   * Consumer-supplied tools that coexist with registered skills.
+   * Skills run provider-executed (loop continues). When the model calls a
+   * tool that matches an entry here but is NOT a registered skill, the loop
+   * emits tool-input-start + tool-call (without providerExecuted) and
+   * terminates with finishReason 'tool-calls' — the consumer executes it.
+   */
+  extraTools?: ToolDefinition[];
 };
 
 export type RunToolLoopResult = {
@@ -113,7 +121,10 @@ export async function runToolLoop(
   input: RunToolLoopInput,
   onPart: (part: RunToolLoopPart) => void,
 ): Promise<RunToolLoopResult> {
-  const tools = getToolsForQuery(deps.registry, config, input.query);
+  const skillTools = getToolsForQuery(deps.registry, config, input.query);
+  const extraTools = input.extraTools ?? [];
+  const extraToolNames = new Set(extraTools.map((t) => t.function.name));
+  const tools: ToolDefinition[] = [...skillTools, ...extraTools];
   const appended: Message[] = [];
   const conversation: Message[] = [
     { role: 'system', content: input.systemPrompt },
@@ -143,9 +154,69 @@ export async function runToolLoop(
     );
     lastResult = result;
 
-    let parsedCalls = validateToolCalls(result.toolCalls, deps.registry);
+    let parsedCalls = validateToolCalls(result.toolCalls, deps.registry, {
+      extraToolNames,
+    });
     if (parsedCalls.length === 0 && result.text.trim()) {
-      parsedCalls = extractToolCallsFromText(result.text, deps.registry);
+      parsedCalls = extractToolCallsFromText(result.text, deps.registry, {
+        extraToolNames,
+      });
+    }
+
+    const consumerCall = parsedCalls.find((c) => c.isConsumerTool);
+    if (consumerCall) {
+      const toolCallId =
+        consumerCall.id ??
+        result.toolCalls.find(
+          (tc) => tc.function.name === consumerCall.name,
+        )?.id ??
+        `call_${consumerCall.name}_${depth}`;
+
+      const assistantMsg: Message = {
+        role: 'assistant',
+        content: '',
+        tool_calls: result.toolCalls,
+      };
+      appended.push(assistantMsg);
+
+      onPart({
+        type: 'tool-input-start',
+        toolCallId,
+        toolName: consumerCall.name,
+        parameters: consumerCall.parameters,
+        providerExecuted: false,
+      });
+
+      onPart({
+        type: 'tool-call',
+        toolCallId,
+        toolName: consumerCall.name,
+        input: JSON.stringify(consumerCall.parameters),
+        parameters: consumerCall.parameters,
+        providerExecuted: false,
+      });
+
+      const providerMetadata: RunToolLoopProviderMetadata = {
+        timings: result.timings,
+        contextUsage: deps.engine.getContextUsage(),
+      };
+      const usage = buildUsage(result);
+
+      onPart({
+        type: 'finish',
+        finishReason: 'tool-calls',
+        usage,
+        responseText: '',
+        reasoning: result.reasoning,
+        providerMetadata,
+      });
+
+      return {
+        finalMessages: appended,
+        finishReason: 'tool-calls',
+        usage,
+        providerMetadata,
+      };
     }
 
     if (parsedCalls.length === 0) {
@@ -355,6 +426,10 @@ async function executeSkill(
   call: ParsedToolCall,
 ): Promise<SkillResult> {
   const { skill, parameters } = call;
+
+  if (!skill) {
+    return { error: `Cannot execute skill "${call.name}" — not registered` };
+  }
 
   if (skill.requiresNetwork) {
     const online = await checkConnectivity();
