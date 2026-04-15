@@ -169,6 +169,43 @@ function ChatScreen() {
 }
 ```
 
+## Using the Vercel AI SDK
+
+The package ships a `LanguageModelV3` provider under the
+`react-native-gemma-agent/ai` subpath. Skills run provider-executed
+alongside any consumer-supplied `tools`. Three day-one fixes vs the
+existing on-device providers: streaming `tool-input-*` parts, tool
+`inputSchema` carried through to the model, and `abortSignal`
+honored. See [`docs/MIGRATION_AI_SDK.md`](docs/MIGRATION_AI_SDK.md)
+for the full migration guide.
+
+```tsx
+import { createGemmaProvider } from 'react-native-gemma-agent/ai';
+import { InferenceEngine, SkillRegistry, ModelManager } from 'react-native-gemma-agent';
+import { streamText } from 'ai';
+
+const gemma = createGemmaProvider({
+  engine: new InferenceEngine(),
+  registry: new SkillRegistry(),
+  modelManager: new ModelManager({ repoId, filename }),
+  skillExecutor: sandboxRef.current!.execute,
+});
+
+const model = gemma('gemma-4-e2b');
+await model.prepare();
+
+const result = streamText({
+  model,
+  messages,
+  providerOptions: { gemma: { skillRouting: 'bm25' } },
+});
+
+for await (const chunk of result.fullStream) console.log(chunk);
+```
+
+`useChat` works on-device through a custom in-process `ChatTransport`
+that wraps `streamText`. See `example/src/AiSdkChatTab.tsx`.
+
 ## Agent & Chat
 
 ### useGemmaAgent
