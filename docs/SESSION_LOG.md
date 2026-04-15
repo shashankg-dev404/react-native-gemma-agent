@@ -1162,3 +1162,78 @@ Rules (carry-forward):
 - One commit at the end.
 
 Source still at `/tmp/phase19-research/callstack-ai/packages/llama/src/ai-sdk.ts`. Reference lines for Phase 19.4: 333–349 (doGenerate content assembly), 520–624 (stream loop — do NOT port the literal `<think>` matching), 660–662 (abort wiring — port with the addEventListener fix).
+
+---
+
+## Session — 2026-04-16 (Phase 19.4 — GemmaLanguageModel)
+
+### What landed
+
+**Phase 19.4 — DONE**
+
+- `src/ai/GemmaLanguageModel.ts` — class implementing `LanguageModelV3`:
+  - `specificationVersion: 'v3'`, `provider: 'gemma'`, `modelId` (defaults to `'gemma-4-e2b'`), `supportedUrls: {}`.
+  - Constructor `{ modelId?, engine, registry, executor?, systemPrompt?, defaults? }` with `GemmaLanguageModelDefaults = { maxChainDepth, skillRouting, maxToolsPerInvocation, activeCategories, skillTimeout, contextWarningThreshold }`. Defaults match ADR-006: 5 / 'all' / 5 / [] / 30000 / 0.8.
+  - `prepare()` — throws if engine has no model loaded. ModelManager wiring is 19.5's job.
+  - `unload()` — pass-through to `engine.unload()`.
+  - `doGenerate` — accumulates `RunToolLoopPart[]` via `onPart` callback, maps via `runToolLoopPartToContent` into `LanguageModelV3Content[]`, returns `{ content, finishReason, usage, warnings, providerMetadata }`.
+  - `doStream` — returns `{ stream }` where the stream enqueues a leading `stream-start` with aggregated warnings, then drives `runToolLoop` through a stateful bridge (`createStreamBridge`) that maps internal parts to V3 parts and closes on `finish` / `error`. `ReadableStream.cancel` calls `engine.stopGeneration()` + removes abort listener.
+  - Call-prelude (`prepareCall`): runs `prepareMessages(prompt)`, filters provider-typed tools with warnings, runs `separateProviderAndConsumerTools` for collision warnings, **drops all consumer tools with a warning (Option B per 19.4 scope)** — full consumer-tool coexistence lands in 19.5. Reads `providerOptions.gemma` overrides (`maxChainDepth`, `skillRouting`, `maxToolsPerInvocation`, `activeCategories`). Emits context-threshold warning when `engine.getContextUsage().percent >= threshold * 100` at call start. Downgrades `toolChoice: { type: 'tool'|'required' }` to `'auto'` with a warning. Extracts latest user-role query for BM25 routing.
+  - Abort wiring: `options.abortSignal?.addEventListener('abort', () => engine.stopGeneration())`, cleanup in `finally` and `stream.cancel`. Fixes callstackincubator/ai#199.
+
+- `src/ai/streamPartBridge.ts` — extracted for the 300-line cap per CLAUDE.md rule 7a:
+  - `createStreamBridge(controller)` — stateful `onPart` returning a closure that tracks open text / reasoning IDs and emits `-start`/`-end` brackets around `-delta` parts. Translates `tool-input-start` (with `parameters: Record`) into the `-start → -delta(stringified) → -end` triplet. Translates `tool-result` with `skillResultToJson` (different from the prompt-side `skillResultToToolOutput` — V3's stream `tool-result` uses `result: JSONValue, isError?` not `output: ToolResultOutput`). Closes text / reasoning on `finish` or `error`.
+  - `runToolLoopPartToContent` — doGenerate path: `text-delta → Text`, `reasoning-delta → Reasoning`, `tool-call → ToolCall`, `tool-result → ToolResult` (dropping start/end markers).
+  - `buildV3Usage`, `buildProviderMetadata`, `toV3Warnings` — helpers shared by both methods.
+
+- Tests — `src/__tests__/GemmaLanguageModel.test.ts`, 13 scenarios with a local `MockInferenceEngine` that supports token streams, pushable completion results, configurable context usage, and stop-count assertion:
+  1. Text-only turn stream-part sequence: `stream-start → text-start → text-delta(×3) → text-end → finish`.
+  2. Skill turn sequence: `tool-input-start → -delta → -end → tool-call → tool-result` in order, `providerExecuted: true` on tool-call, correct `input` and `result` values.
+  3. `abortSignal` triggers `engine.stopGeneration()`.
+  4. `providerOptions.gemma.maxChainDepth: 2` caps the loop at 2 generate calls.
+  5. `providerOptions.gemma.skillRouting: 'bm25'` + `maxToolsPerInvocation: 1` + query "calculate 2+2" → only calculator sent.
+  6. Context usage 85% at call start → stream-start warning mentions `85%`.
+  7. Consumer tool passed → dropped with a `skill`-mentioning warning, tools NOT forwarded to engine (Option B).
+  8. Consumer tool name collides with skill → precedence warning names the skill.
+  9. `finish.providerMetadata.gemma` carries `timings.promptMs=100`, `predictedMs=200`, `contextUsage.total=4096`.
+  10. `doGenerate` text-only → `content` has text, `finishReason.unified='stop'`, `usage.inputTokens.total=10` / `outputTokens.total=20`, `providerMetadata.gemma` present.
+  11. `doGenerate` skill turn → `content` has both `tool-call` and `tool-result`, `result='25'`.
+  12. `skillRouting` default `'all'` sends every registered skill.
+  13. Provider tools (type `'provider'`) dropped with a warning.
+
+- All 172 tests green across 15 suites (159 existing + 13 new). `npx tsc --noEmit` clean.
+
+### Decision points encountered
+
+- **Consumer tools — Option A vs Option B** (flagged as STOP point in task brief). Went with **Option B** (provider-executed skills only, consumer tools dropped with warning). Reason: 19.4's explicit scope bans `runToolLoop.ts` edits, and the loop-termination semantics for mid-chain consumer tool-calls with `toolChoice: 'auto'` aren't fully spelled out in ADR-006. 19.5's `createGemmaProvider` phase will do the full consumer-tool wiring per Phase 19.5 pickup notes.
+- **V3 `LanguageModelV3ToolResult` stream part shape** — has `result: JSONValue, isError?` NOT `output: ToolResultOutput`. The task brief said to use `skillResultToToolOutput` here but that helper targets the prompt-side `LanguageModelV3ToolResultPart`. Added a private `skillResultToJson` in `streamPartBridge.ts` for the stream / content path. Prompt-side `skillResultToToolOutput` is unchanged.
+- **`providerExecuted` on tool-result** — not a field on `LanguageModelV3ToolResult`. Removed it; V3 treats stream-emitted tool-results as inherently provider-executed.
+
+### Files Created
+- `src/ai/GemmaLanguageModel.ts`
+- `src/ai/streamPartBridge.ts`
+- `src/__tests__/GemmaLanguageModel.test.ts`
+
+### Files Modified
+- `docs/SESSION_LOG.md` — this entry
+
+### Next Session — Start Here
+
+**Pick up at Phase 19.5 (`createGemmaProvider` + subpath wiring + consumer-tool coexistence).**
+
+Phase 19.5 task list:
+1. `src/ai/createGemmaProvider.ts` — callable-provider factory per ADR-006 §"Public API sketch". `GemmaProvider.languageModel(modelId, opts)` returns a `GemmaLanguageModel`. Pattern mirrors `@react-native-ai/llama` ai-sdk.ts:1089–1158 ("inspire only" per synthesis §5 — callable-provider convention, don't verbatim copy).
+2. `src/ai/index.ts` — export `createGemmaProvider`, `GemmaLanguageModel`, `GemmaProvider`, `GemmaProviderConfig`, `GemmaLanguageModelDefaults`, `GemmaProviderOptions` (the `providerOptions.gemma` shape).
+3. **Consumer-tool coexistence (deferred from 19.4)** — decide between extending `runToolLoop` with `extraTools` (Option A) vs keeping them adapter-side with "break after tool-call, no tool-result" semantics (cleaner but requires loop-termination contract in the ADR). Needs a decision up front. The current 19.4 adapter drops them with a warning; 19.5 must replace that with real wiring.
+4. Wire `knowledgeStore` through `GemmaProviderConfig` into the `systemPrompt` augmentation path. Current 19.4 model takes a raw `systemPrompt` string only — 19.5 needs to replicate `AgentOrchestrator.buildSystemPrompt`'s note-index splice. If extraction feels necessary (to avoid duplicating the code), STOP and ask before touching `AgentOrchestrator.ts`.
+5. Optionally wire `ModelManager` into `prepare()` so `prepare(modelPath)` downloads + loads in one call. Currently `prepare()` throws if engine unloaded.
+6. +~25 tests per ADR §"Test plan" — factory shape, subpath index re-exports, consumer-tool coexistence matrix, knowledgeStore injection, BM25 + categories via providerOptions and defaults, `toolChoice` variants.
+
+Rules (carry-forward):
+- ADR-006 is the spec; STOP and ask if ambiguous (especially the consumer-tool loop-termination contract for #3).
+- No new deps beyond `@ai-sdk/provider` (already installed) and `ai` (example app only, Phase 19.6).
+- `src/runToolLoop.ts`, `src/AgentOrchestrator.ts`, `src/InferenceEngine.ts`, `src/types.ts`, `src/SkillRegistry.ts` — ask before touching.
+- All 172 existing tests stay green.
+- MIT attribution comment at top of `createGemmaProvider.ts` citing ai-sdk.ts:1089–1158 ("inspire only").
+- One commit at the end of 19.5.
+
