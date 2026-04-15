@@ -461,6 +461,96 @@ describe('GemmaLanguageModel', () => {
     expect(tools).toHaveLength(3);
   });
 
+  describe('prepare()', () => {
+    function makeBareModel(opts: {
+      engine: MockInferenceEngine;
+      modelManager?: { modelPath: string | null; findModel: () => Promise<string | null> };
+    }): GemmaLanguageModel {
+      return new GemmaLanguageModel({
+        engine: opts.engine as never,
+        registry: new SkillRegistry(),
+        modelManager: (opts.modelManager ?? null) as never,
+      });
+    }
+
+    it('no-ops when engine is already loaded', async () => {
+      const engine = new MockInferenceEngine();
+      engine.isLoaded = true;
+      const loadModel = jest.fn();
+      (engine as unknown as { loadModel: jest.Mock }).loadModel = loadModel;
+
+      await makeBareModel({ engine }).prepare();
+      await makeBareModel({ engine }).prepare('/some/path.gguf');
+
+      expect(loadModel).not.toHaveBeenCalled();
+    });
+
+    it('loads from explicit modelPath when engine is unloaded', async () => {
+      const engine = new MockInferenceEngine();
+      engine.isLoaded = false;
+      const loadModel = jest.fn().mockResolvedValue(123);
+      (engine as unknown as { loadModel: jest.Mock }).loadModel = loadModel;
+
+      await makeBareModel({ engine }).prepare('/tmp/gemma.gguf');
+
+      expect(loadModel).toHaveBeenCalledWith('/tmp/gemma.gguf');
+    });
+
+    it('loads via ModelManager when no path is passed', async () => {
+      const engine = new MockInferenceEngine();
+      engine.isLoaded = false;
+      const loadModel = jest.fn().mockResolvedValue(99);
+      (engine as unknown as { loadModel: jest.Mock }).loadModel = loadModel;
+      const modelManager = {
+        modelPath: '/cached/gemma.gguf',
+        findModel: jest.fn(),
+      };
+
+      await makeBareModel({ engine, modelManager }).prepare();
+
+      expect(loadModel).toHaveBeenCalledWith('/cached/gemma.gguf');
+      expect(modelManager.findModel).not.toHaveBeenCalled();
+    });
+
+    it('falls back to ModelManager.findModel() when modelPath is null', async () => {
+      const engine = new MockInferenceEngine();
+      engine.isLoaded = false;
+      const loadModel = jest.fn();
+      (engine as unknown as { loadModel: jest.Mock }).loadModel = loadModel;
+      const modelManager = {
+        modelPath: null,
+        findModel: jest.fn().mockResolvedValue('/found/gemma.gguf'),
+      };
+
+      await makeBareModel({ engine, modelManager }).prepare();
+
+      expect(modelManager.findModel).toHaveBeenCalled();
+      expect(loadModel).toHaveBeenCalledWith('/found/gemma.gguf');
+    });
+
+    it('throws when ModelManager has no model on device', async () => {
+      const engine = new MockInferenceEngine();
+      engine.isLoaded = false;
+      const modelManager = {
+        modelPath: null,
+        findModel: jest.fn().mockResolvedValue(null),
+      };
+
+      await expect(
+        makeBareModel({ engine, modelManager }).prepare(),
+      ).rejects.toThrow(/download\(\) first/);
+    });
+
+    it('throws a clear error when no path, no manager, and engine unloaded', async () => {
+      const engine = new MockInferenceEngine();
+      engine.isLoaded = false;
+
+      await expect(makeBareModel({ engine }).prepare()).rejects.toThrow(
+        /no model loaded/,
+      );
+    });
+  });
+
   it('drops provider tools with a warning', async () => {
     const engine = new MockInferenceEngine();
     engine.pushResponse({ text: 'ok', content: 'ok' });
