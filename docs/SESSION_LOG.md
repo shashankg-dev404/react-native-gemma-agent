@@ -698,3 +698,410 @@ context pressure before the model starts truncating or throwing
 1. `npm publish` and `git tag v0.2.0` (Shashank to run manually)
 2. Record updated demo video showing Knowledge Base feature for LinkedIn
 3. Draft LinkedIn post for v0.2.0 launch (see `docs/LINKEDIN_CONTENT.md`)
+
+---
+
+## Session — 2026-04-16 (Phase 19 — Vercel AI SDK Adapter, RESEARCH ONLY)
+
+**Instruction from Shashank**: research-first, no `src/` edits. Go Phase-by-Phase (A→B→C), write findings into SESSION_LOG at the end of each Phase, then wait for explicit approval before proceeding.
+
+### Phase A — Competitive Analysis (COMPLETED)
+
+Cloned four repos to `/tmp/phase19-research/` and read source directly (no web research needed):
+- `callstackincubator/ai` (monorepo — contains `llama`, `mlc`, `apple-llm` packages)
+- `software-mansion/react-native-executorch`
+- `vercel/ai` (the spec itself)
+
+Produced four writeups in `docs/RESEARCH/`:
+- `phase19-competitor-react-native-ai-llama.md`
+- `phase19-competitor-react-native-ai-mlc.md`
+- `phase19-competitor-react-native-executorch.md`
+- `phase19-competitor-vercel-ai.md`
+
+#### Critical findings
+
+**Finding 1 — The spec version is V3, not V2.**
+Every active competitor adapter declares `specificationVersion = 'v3'` and imports from `@ai-sdk/provider` major version `3.x`. `LanguageModelV2` has been superseded. We ship V3.
+
+**Finding 2 — PLAN.md's competitor table is wrong on one row.**
+`react-native-executorch` does NOT ship a Vercel AI SDK provider in its current source tree (verified by `grep -rln LanguageModelV @ai-sdk/provider` returning zero hits across the whole monorepo). Their claim-to-fame is `useLLM` (a hook), not an AI SDK adapter. This means:
+- Only ONE org ships an AI-SDK provider for on-device RN today: Callstack (`@react-native-ai/llama`, `@react-native-ai/mlc`, `@react-native-ai/apple-llm`).
+- Executorch users who want `streamText` / `generateObject` / `useChat` are **unserved**. Our adapter is their only migration path.
+- The "declarative hook" competition (`useLLM`) is Phase 20's fight, not Phase 19's.
+
+**Finding 3 — The leading provider (`@react-native-ai/llama@0.12.0`) has known bugs we can beat on day one.**
+
+From reading packages/llama/src/ai-sdk.ts (1158 lines, MIT licensed — portable) and issues #199, #201, #146, #206:
+
+| # | Bug / gap in `@react-native-ai/llama` | Our advantage |
+|---|---|---|
+| 1 | `providerOptions` from `streamText` never reaches llama.rn (issue #199) — users have to `patch-package` to enable `enable_thinking`, `reasoning_format`. | Forward `options.providerOptions.gemma` straight into our `InferenceEngine.generate`. |
+| 2 | Reasoning detection is literal string match on `<think>` — tokenizer splits it, fails. | Use `result.reasoning_content` from llama.rn directly; no string matching. |
+| 3 | `tool-input-start / -delta / -end` stream parts are NEVER emitted — UI can't show "calling tool X with args …" as args stream. | Emit them from `TokenData.tool_calls` progressive updates. |
+| 4 | `options.abortSignal` is ignored; only `stream.cancel()` works. | Wire abort signal to `engine.stopGeneration()`. |
+| 5 | Tool `inputSchema` → llama.rn mapping drops the schema (passed under wrong key; llama.rn expects `parameters`). Latent silent bug. | Explicit `inputSchema` → `parameters` rename. |
+| 6 | Gemma 4 E2B fails to load (issue #206, still open). | We already ship working Gemma 4 via llama.rn 0.12.0-rc.3+ (see Phase 22). |
+
+**Finding 4 — `@react-native-ai/mlc`'s tool support is weaker than `@react-native-ai/llama`'s.**
+MLC adapter:
+- Lossy tool-param mapping: JSON Schema collapsed to `Record<string, string>` (just descriptions).
+- Does not stream tool calls at all — `finish_reason: 'tool_calls'` comes without any `tool-call` stream part.
+- `toolChoice` variants `'required'` / `{ type: 'tool', toolName }` silently downgraded to `'none'`.
+- NO reasoning support.
+
+Not a direct competitor to us (different runtime) but useful for positioning: Phase 19 should beat them on tool calling.
+
+**Finding 5 — `react-native-executorch`'s `LLMController`** uses regex-based tool-call parsing (`parseToolCall` in utils/llm.ts:15-46) — greedy `\[(.|\s)*\]` match — fragile. They insert tool results as `role: 'assistant'` (non-standard; breaks chat templates). Our llama.rn-native parser + proper `role: 'tool'` messages is a real quality delta.
+
+**Finding 6 — Worth porting (all MIT / Apache-2.0):**
+- `convertFinishReason` from llama's adapter (ai-sdk.ts:48-69) — reusable as-is, public-domain-equivalent shape.
+- `prepareMessagesWithMedia` shape (ai-sdk.ts:93-225) — re-implement for our `Message` type.
+- `fixAndValidateStructuredOutput` from executorch (utils/llm.ts:99-116) — reserve for Phase 23 (`generateStructured`).
+- `createLlamaProvider` callable-provider convention (ai-sdk.ts:1089-1158) — follow exactly.
+
+#### LanguageModelV3 contract summary (full notes in `phase19-competitor-vercel-ai.md`)
+
+- Interface: two methods (`doGenerate`, `doStream`) + three readonly props (`specificationVersion`, `provider`, `modelId`) + `supportedUrls`.
+- Tool shape changed: V3 uses `inputSchema`, not `parameters`.
+- Stream part union: 17 variants. The ones we must emit:
+  - `stream-start` (with warnings array), `text-start / -delta / -end`, `reasoning-start / -delta / -end`, `tool-input-start / -delta / -end`, `tool-call`, `finish`.
+  - Optionally: `tool-result` (when provider-executed), `raw` (when `includeRawChunks: true`), `error`.
+- Invariants: every `-delta` needs a matching `-start`/`-end`; `finish` terminates; `stream-start` is first.
+- Tool-call arguments are a JSON **string** (`input: string`), matching llama.rn's output shape exactly.
+- `abortSignal`, `providerOptions`, `responseFormat: { type: 'json', schema }` are all part of the call options we must respect.
+
+#### Mapping our components to V3 (preview for Phase B)
+
+| Our component | V3 role |
+|---|---|
+| `InferenceEngine.generate` | Core of `doGenerate` + `doStream` |
+| `InferenceEngine.stopGeneration` | `stream.cancel` handler + `abortSignal` listener |
+| `SkillRegistry.toToolDefinitions` | One direction of the tools bridge; already OpenAI-compatible, needs `parameters` → V3 `inputSchema` rename at the adapter boundary |
+| `FunctionCallParser.validateToolCalls` | Validation gate before emitting `tool-call` parts; still useful |
+| `AgentOrchestrator.sendMessage` | NOT used by the provider itself — belongs above the provider. Two choices: (a) keep orchestrator as an agent loop that uses the provider; (b) expose skills as provider-executed tools and let AI SDK's tool loop drive. Design choice to resolve in Phase C. |
+| `KnowledgeStore` + note index | System-prompt augmentation, same as today. Provider gets the enriched prompt. |
+| `BM25Scorer` + `activeCategories` | Skill filtering layer — happens before we hand tools to the provider. |
+
+#### Files produced
+
+- `docs/RESEARCH/phase19-competitor-react-native-ai-llama.md` (~175 lines)
+- `docs/RESEARCH/phase19-competitor-react-native-ai-mlc.md` (~105 lines)
+- `docs/RESEARCH/phase19-competitor-react-native-executorch.md` (~130 lines)
+- `docs/RESEARCH/phase19-competitor-vercel-ai.md` (~170 lines)
+
+No `src/` files touched. No tests changed.
+
+#### What to pick up next
+
+**⏸ WAITING FOR APPROVAL before starting Phase B.**
+
+Phase B = `docs/RESEARCH/phase19-synthesis.md`: deduplicated pain-point ranking, component-to-V3 mapping, mismatches, our differentiators (skills + categories + BM25 + KB as AI SDK tools), porting decisions with license notes.
+
+Phase C = `docs/ADR/006-vercel-ai-sdk-compat.md`: the decision record with public API sketch, stream-part mapping, top competitor pain points we explicitly fix in v0.3.0, and a test plan.
+
+### Open questions for Shashank
+
+1. **V3 vs V2**: the prompt says V2. Everyone ships V3. Confirm we target V3 in Phase C.
+2. **Provider-executed tools vs client-side**: should the provider auto-run skills (mark `providerExecuted: true`, emit `tool-result` parts — keeps the skill sandbox internal, nice DX) OR expose skills as regular AI SDK tools so AI SDK's own `tools: { execute }` loop drives them (more idiomatic, lets devs mix our skills with their own tools)? Both are viable; I have a preference for provider-executed but want your call before writing the ADR.
+3. **Scope**: `@callstack/ai` is not a separate package — it's the umbrella name for the `callstackincubator/ai` monorepo. Already covered. `@react-native-ai/apple-llm` is iOS-only; I read it to understand the provider-executed tool pattern (`globalThis.__APPLE_LLM_TOOLS__`) but did not produce a standalone writeup since we're not building iOS-native paths in Phase 19. OK to proceed without one?
+
+---
+
+### Phase B — Synthesis (COMPLETED)
+
+Wrote `docs/RESEARCH/phase19-synthesis.md` (~300 lines). Consolidates the four Phase A writeups into design-ready material for ADR-006.
+
+#### What's in the synthesis
+
+1. **Unified pain-point ranking** — 12 pain points, scored `frequency × severity`. Top 3: (#1) tool-call arg streaming gaps across llama/mlc/executorch (score 16), (#2) tool parameter schema silently lost in llama's adapter due to inputSchema/parameters key mismatch + mlc's lossy Record<string,string> collapse (score 10), (#3) ignored `abortSignal` across llama/mlc (score 9). Each row has citation + our answer.
+2. **Component → V3 mapping** — table covering InferenceEngine, SkillRegistry, FunctionCallParser, AgentOrchestrator, KnowledgeStore, BM25Scorer, Message/ToolCall/SkillResult/AgentEvent types, SkillSandbox, ModelManager. Each row names the V3 surface (doGenerate/doStream/tool-bridge/prompt-augmentation/below-adapter/lifecycle) and the glue code.
+3. **Mismatches to resolve** — 11 concrete shape incompatibilities with translation strategy for each:
+   - AgentOrchestrator holds history; V3 is stateless → factor out `runToolLoop` helper
+   - `Message.content: string` vs V3's `ContentPart[]` per role → port `prepareMessagesWithMedia` from llama's adapter
+   - `SkillResult` vs V3's 7-variant `ToolResultOutput` union (text/json/execution-denied/error-text/error-json/content) → explicit per-variant translation
+   - `AgentEvent` vs 17 V3 stream-part types → mapping table (thinking→reasoning-start, skill_called→tool-input-start/-delta/-end+tool-call, etc.)
+   - `ToolCall.function.arguments` vs V3's flat `ToolCall.input`
+   - finishReason → port `convertFinishReason` from llama
+   - **Tool-def key rename `parameters` → `inputSchema` at the boundary** (this is llama's latent bug)
+   - toolChoice union handling
+   - Usage shape nesting
+   - Context size per-engine vs V3 per-call
+   - responseFormat/JSON mode (Phase 23 coupling)
+4. **Differentiators surfacing through V3** — provider-executed skills (stream parts with `providerExecuted: true`), skill categories (`providerOptions.gemma.activeCategories`), BM25 routing (`providerOptions.gemma.skillRouting`), KnowledgeStore (system-prompt augmentation + `local_notes` as a provider-executed tool), rich `providerMetadata.gemma.timings` mirror of mlc's `extraUsage` pattern.
+5. **Porting decisions, license-annotated** — verbatim / port with changes / inspire only / do not port, per source file + line range. All MIT or Apache-2.0 sources. Key ports: `convertFinishReason` (llama ai-sdk.ts:48–69, MIT, port with changes) and `prepareMessagesWithMedia` (llama ai-sdk.ts:93–225, MIT, port with changes). Actively avoid: llama's token-FSM (buggy string match), mlc's `convertToolsToNativeFormat` (lossy), executorch's `parseToolCall` (fragile regex). Reserve for Phase 23: `fixAndValidateStructuredOutput` from executorch (utils/llm.ts:99–116).
+6. **Open questions for Phase C** — 9 questions; the load-bearing ones below.
+
+#### New findings beyond Phase A
+
+- Phase A's pain-point lists were per-competitor; the ranked merge surfaces that **#1 tool-arg streaming** affects all four competitors (executorch via absence, others via implementation gaps) — this is the strongest "we fix this on day one" story.
+- **Mismatch #1 (stateless V3 vs stateful AgentOrchestrator)** is the most consequential refactor. We need a `runToolLoop(engine, registry, executor, messages, tools, onPart)` helper extracted from `AgentOrchestrator.sendMessage` (AgentOrchestrator.ts:115–222). The orchestrator stays for `useGemmaAgent`; the adapter reuses the extracted helper. This is new work not mentioned in Phase A.
+- **llama's adapter has a second latent bug** beyond the ones Phase A listed: ai-sdk.ts:409–415 passes V3 tools with `inputSchema` verbatim to llama.rn, which reads `function.parameters`. The schema is silently dropped. Not in any issue. We fix via the rename at the adapter boundary.
+- **Tool-def key rename is a correctness fix, not just a shape fix** — without it, the model knows tool names but not parameter schemas, which explains some of the tool-call reliability complaints in #199 comments.
+- **`providerMetadata.gemma.contextUsage` + `stream-start.warnings` at threshold** is how our existing context-warning feature surfaces through V3. There's no mid-stream warning primitive; metadata is the idiomatic slot.
+
+#### Explicit mismatches list (for Shashank)
+
+See synthesis §3. Eleven mismatches, each with a translation strategy. The load-bearing ones are #1 (stateless refactor), #2 (content-part flattening), #3 (SkillResult variants), #4 (AgentEvent → stream parts), #7 (inputSchema/parameters rename).
+
+#### Open questions (condensed)
+
+- **Q1** Subpath `react-native-gemma-agent/ai` vs separate package? Preference: subpath.
+- **Q2** OK to refactor `AgentOrchestrator.sendMessage` to extract `runToolLoop` in Phase 19? ~80 lines of churn. Preference: yes.
+- **Q3** `generateObject`: (a) out of scope, (b) pass-through JSON mode only / repair in Phase 23, (c) full repair now? Preference: (b).
+- **Q4** If consumer-supplied tool name collides with a registered skill — skill wins or consumer tool wins? Preference: skill wins + warning.
+- **Q5** `maxChainDepth`: provider-creation-time default + `providerOptions.gemma` override? Preference: both.
+- **Q6** Expose `providerMetadata.gemma.knowledgeBase` on `finish`? Preference: skip for ADR-006.
+- **Q7** Mark `textEmbeddingModel` / `rerankModel` / `speechModel` as out-of-scope in ADR-006? Preference: yes.
+- **Q8** Warnings: stream-start-only vs also provider-level log? Preference: stream-start-only.
+- **Q9** Position adapter as "Gemma 4 provider" or "multi-model on-device provider"? Preference: latter (anticipates Phase 21).
+
+#### Files produced
+
+- `docs/RESEARCH/phase19-synthesis.md` (~300 lines, no src/ touched)
+
+#### What to pick up next
+
+**⏸ WAITING FOR APPROVAL before starting Phase C.**
+
+Phase C = `docs/ADR/006-vercel-ai-sdk-compat.md`. Needs Shashank's answers to Q1–Q9 (at minimum Q1, Q2, Q3, Q4 — the load-bearing ones). Everything else in the ADR is ready to write once those answers are in.
+
+**Phase B complete. OK to proceed to Phase C (ADR-006)?**
+
+---
+
+### Phase C — ADR-006 authored (COMPLETED)
+
+Wrote `docs/ADR/006-vercel-ai-sdk-compat.md` (~320 lines). Q1–Q9 all
+resolved per the synthesis preferences approved in the Phase C
+handoff prompt; no divergence. No `src/` files touched.
+
+#### What's in the ADR
+
+1. **Status** — Accepted (2026-04-17).
+2. **Context** — references Phase A + B writeups; PLAN.md:33–44; the
+   V3-vs-V2 resolution; the four forces (stateless V3, competitor gap,
+   differentiator mapping, orchestrator refactor).
+3. **Decision** — target `LanguageModelV3` / `@ai-sdk/provider ^3.x`;
+   subpath export `react-native-gemma-agent/ai`; provider-executed
+   skills coexisting with consumer-supplied tools; skill-wins +
+   warning on name collision; multi-model positioning.
+4. **Public API sketch** — concrete TypeScript for
+   `createGemmaProvider`, `GemmaProvider.languageModel`,
+   `GemmaLanguageModel extends LanguageModelV3`,
+   `GemmaLanguageModelDefaults`, the `providerOptions.gemma` schema,
+   and the `providerMetadata.gemma` output shape.
+5. **Stream-part mapping** — 12-row table covering every V3 stream
+   part we emit, with source citations back to
+   `InferenceEngine.ts:185–193, 267–272, 300–329`,
+   `FunctionCallParser.ts:16–42, 52–89`, and synthesis §3 mismatches.
+   Sequencing invariants formalized.
+6. **Pain points fixed on day one** — the 3 rows from synthesis §1
+   top: tool-arg streaming, schema loss, abortSignal. Each with the
+   competitor source path, issue URL (#199, #201), and the
+   implementation sentence.
+7. **Internal refactor** — `runToolLoop` extraction from
+   `AgentOrchestrator.sendMessage` (AgentOrchestrator.ts:115–222)
+   into a new `src/runToolLoop.ts`. Full signature + glue. Orchestrator
+   `sendMessage` becomes a thin wrapper; existing `useGemmaAgent`
+   behaviour preserved.
+8. **Differentiator surfaces** — §4 table: provider-executed skills,
+   categories via `providerOptions.gemma.activeCategories`, BM25 routing
+   via `providerOptions.gemma.skillRouting`, KnowledgeStore via
+   system-prompt augmentation + `local_notes` as provider-executed
+   tool, `providerMetadata.gemma.contextUsage` + `.timings`, offline
+   guard.
+9. **Out of scope** — embeddings/rerank/speech (Q7); full
+   `generateObject` validation (Q3 → Phase 23 / ADR-007); iOS (Phase
+   24); multimodal beyond text (Phase 29); knowledgeBase metadata (Q6).
+10. **Test plan** — matrix: streamText × (no tools / skills only /
+    consumer only / both) × (abortSignal on / off) × (skillRouting all
+    / bm25) × (maxChainDepth default / override). Plus `doGenerate`
+    parity, translation-correctness unit tests (`convertFinishReason`,
+    `prepareMessages`, `inputSchema→parameters` rename, `SkillResult →
+    ToolResultOutput` all 7 variants), `useChat()` end-to-end in
+    example app, and regression (124 tests must stay green).
+11. **License attestations** — 9-row table: `convertFinishReason` +
+    `prepareMessagesWithMedia` ported-with-changes from llama MIT;
+    `fixAndValidateStructuredOutput` reserved for Phase 23 from
+    executorch Apache-2.0; `@ai-sdk/provider` as peer Apache-2.0;
+    explicit "do not port" list for the buggy upstream paths.
+12. **Consequences** — Positive / Negative / Risks sections covering
+    the V3 stateless refactor cost, AI SDK release cadence exposure,
+    llama.rn RC semantics, and the Phase 19 JSON-passthrough risk.
+13. **Alternatives Considered** — 7 rejected options: V2 target,
+    consumer-executed skills only, separate package, full
+    `generateObject` now, consumer-tool-wins, provider-only
+    `maxChainDepth`, singleton warnings logger.
+
+#### Decisions vs synthesis preferences
+
+| Q | Synthesis preference | ADR decision | Divergence |
+|---|---|---|---|
+| Q1 | Subpath | Subpath | None |
+| Q2 | Yes, extract `runToolLoop` in Phase 19 | Yes | None |
+| Q3 | JSON-mode passthrough now, repair in Phase 23 | Same | None |
+| Q4 | Skill wins + warning | Same | None |
+| Q5 | Both provider-creation default + per-call override | Same | None |
+| Q6 | Skip `providerMetadata.gemma.knowledgeBase` for ADR-006 | Skip | None |
+| Q7 | Embedding/rerank/speech out of scope | Out of scope | None |
+| Q8 | `stream-start` warnings only | `stream-start` only | None |
+| Q9 | Multi-model provider positioning | Multi-model positioning | None |
+
+No divergence. All nine synthesis preferences carried through
+verbatim.
+
+#### Implementation task list for Phase 19 code work
+
+When Shashank approves, the code phase breaks down as:
+
+1. **Scaffold subpath export** — add `./ai` to `package.json` exports;
+   create `src/ai/index.ts`; add `@ai-sdk/provider ^3.x` as peer.
+2. **Port translation helpers** — `src/ai/convertFinishReason.ts` +
+   `src/ai/prepareMessages.ts` with MIT attribution comments pointing
+   at `@react-native-ai/llama` ai-sdk.ts:48–69 and :93–225.
+3. **Extract `runToolLoop`** — new `src/runToolLoop.ts`; refactor
+   `AgentOrchestrator.sendMessage` to delegate; verify all 124
+   existing tests still pass unchanged.
+4. **Implement `GemmaLanguageModel`** — `doGenerate` + `doStream` on
+   top of `runToolLoop`, emitting V3 stream parts per the §5 mapping
+   table. Wire `abortSignal`, `providerOptions.gemma` passthrough,
+   `inputSchema → parameters` rename.
+5. **Implement `createGemmaProvider`** — callable-provider shape,
+   `languageModel(modelId, opts)` entry point, `prepare()` / `unload()`
+   model methods wrapping `InferenceEngine`.
+6. **Emit `tool-input-*` progressive parts** — from
+   `TokenData.tool_calls` in the `InferenceEngine.generate` `onToken`
+   callback.
+7. **Warnings aggregation** — collect at call-prelude, emit in
+   `stream-start.warnings`.
+8. **`providerMetadata.gemma` attach** — on every `finish` part;
+   timings + contextUsage.
+9. **Test suite** — the matrix from ADR §10. Target: +25 tests across
+   2 new suites (`runToolLoop.test.ts`, `ai-sdk-adapter.test.ts`).
+10. **Example app `useChat()` tab** — one new screen in
+    `example/App.tsx`; on-device manual acceptance per CLAUDE.md rule 6.
+11. **Docs** — migration-from-llama + migration-from-executorch
+    snippets in README; `ai/` subpath API reference.
+
+#### Files produced this phase
+
+- `docs/ADR/006-vercel-ai-sdk-compat.md` (new)
+- `docs/SESSION_LOG.md` (this entry)
+
+No `src/` files touched. No tests changed. No research files added.
+
+#### Open questions
+
+None for the ADR. One PLAN.md follow-up: the literal text on line 36
+still reads `LanguageModelV2`; this ADR supersedes that wording.
+Leaving the PLAN.md edit for the implementation phase (task 1) so the
+commit that flips the target also flips the plan.
+
+**Phase C complete. OK to start Phase 19 implementation?**
+
+---
+
+## Session — 2026-04-16 (Phase 19.1 — subpath scaffold + ADR ambiguity resolved)
+
+### What landed
+
+**Phase 19.1 — DONE, committed `1048147`**
+
+- `package.json`:
+  - Added `"exports"` field with `.` and `./ai` subpaths. Each subpath has `react-native` (source TS for Metro), `types` (compiled .d.ts), and `default` (compiled .js) conditions. `./package.json` re-exported for tooling.
+  - Added `@ai-sdk/provider ^3.0.0` to `peerDependencies`.
+  - Added `peerDependenciesMeta` marking `@ai-sdk/provider` as `optional: true` so non-AI-SDK consumers don't pay the install cost.
+- `src/ai/index.ts` created (placeholder `export {}`).
+- `docs/PLAN.md` line 36: `LanguageModelV2` → `LanguageModelV3`.
+- `npx tsc --noEmit` clean. Full Jest suite: 124/124 green.
+
+### ADR ambiguity raised + resolved
+
+ADR-006 §"Internal refactor" gives `runToolLoop`'s signature with V3 types directly (`onPart: (part: LanguageModelV3StreamPart) => void`, returns `LanguageModelV3FinishReason` / `LanguageModelV3Usage`). Putting this in `src/runToolLoop.ts` (reachable from main entry through `AgentOrchestrator`) means TypeScript resolution chases `@ai-sdk/provider` types even for non-AI-SDK consumers, defeating the subpath gating Phase 19.1 just set up.
+
+**Resolution (Shashank approved Option C):** `runToolLoop` will emit an internal stream-part union (`RunToolLoopPart`) defined in `src/runToolLoop.ts`. The adapter under `src/ai/` is the ONLY code that imports `@ai-sdk/provider` types, and it translates `RunToolLoopPart → LanguageModelV3StreamPart` inside `GemmaLanguageModel.doStream`. This honors the ADR's spirit (stateless loop reusable by both orchestrator and adapter) without breaking subpath gating.
+
+**Practical implication for Phase 19.2:**
+- `RunToolLoopPart` lives in `src/runToolLoop.ts` and covers: `text-start | text-delta | text-end | reasoning-start | reasoning-delta | reasoning-end | tool-input-start | tool-input-delta | tool-input-end | tool-call | tool-result | finish | error` — same shape as V3 stream parts but our own type names, no V3 import.
+- `runToolLoop` returns `{ finalMessages, finishReason: 'stop'|'length'|'tool-calls'|'other', usage: { promptTokens, completionTokens, reasoningTokens? }, providerMetadata: { timings, contextUsage } }` — internal shapes.
+- `AgentOrchestrator.sendMessage` translates `RunToolLoopPart → AgentEvent` in its onPart callback. (`text-delta → token`, `tool-input-start → skill_called`, `tool-result → skill_result`, `finish → response`, etc.)
+- `src/ai/GemmaLanguageModel.ts` translates `RunToolLoopPart → LanguageModelV3StreamPart` and the return value to V3 shapes.
+
+### What did NOT land this session
+
+- Phase 19.2 (`runToolLoop` extraction) — designed but not implemented; deferred so the architecture decision lands first.
+- Phase 19.3–19.6 — untouched.
+
+### Files Modified
+- `package.json` — exports map, optional peer dep
+- `src/ai/index.ts` — new placeholder
+- `docs/PLAN.md` — V2 → V3
+- `docs/SESSION_LOG.md` — this entry
+
+### Next Session — Start Here
+
+**Pick up at Phase 19.2 (`runToolLoop` extraction) using Option C from above.** The architecture is decided; this is now mechanical refactor work.
+
+Reading order:
+1. `.claude/CLAUDE.md` — project rules
+2. `docs/SESSION_LOG.md` — this entry (the Option C decision is the load-bearing context for what `runToolLoop` looks like)
+3. `docs/ADR/006-vercel-ai-sdk-compat.md` — esp. §"Internal refactor" (signature) and §"Stream-part mapping" (semantics — translate to internal `RunToolLoopPart` per Option C, NOT V3 types)
+4. `src/AgentOrchestrator.ts` — full file. Lines 95–241 (`sendMessage`) get split into runToolLoop + thin wrapper. Lines 291–306 (`buildSystemPrompt`) get reused.
+5. `src/InferenceEngine.ts` — lines 125–204 (generate), 185–193 (onToken), 267–272 (getContextUsage), 300–329 (mapResult)
+6. `src/types.ts` — `Message`, `ToolCall`, `AgentEvent`, `SkillResult`, `ToolDefinition`
+7. `src/__tests__/AgentOrchestrator.test.ts` — `MockInferenceEngine` pattern; existing 18 tests must stay green unchanged
+
+Phase 19.2 task list:
+1. Define `RunToolLoopPart` discriminated union + return shape in `src/runToolLoop.ts` (internal types — no `@ai-sdk/provider` import).
+2. Move loop body (AgentOrchestrator.ts:115–222) into `runToolLoop(deps, config, input, onPart)`. Keep system-prompt build, BM25 routing, category filter, connectivity check, validateToolCalls + extractToolCallsFromText fallback, max-chain-depth fallback message, tool_call_id fallback generation — ALL behavior preserved.
+3. `AgentOrchestrator.sendMessage` becomes thin: append user msg → call runToolLoop with flattened prefix → append `finalMessages` → translate `RunToolLoopPart → AgentEvent` in onPart (`text-delta → token`, `tool-input-start → skill_called`, `tool-result → skill_result`, `reasoning-start → thinking`, `finish → response`, `error → error`). Context-warning check stays in orchestrator (it owns `_contextWarningFired` state).
+4. `npx jest` — all 124 tests must stay green, no test file edits.
+5. `npx tsc --noEmit` clean.
+6. Commit: `refactor: extract runToolLoop from AgentOrchestrator`
+
+Then Phase 19.3 (translation helpers under `src/ai/` — `convertFinishReason`, `prepareMessages`, `convertToolResultOutput`, `toolShapeBridge` for the inputSchema→parameters rename), Phase 19.4 (`GemmaLanguageModel`), Phase 19.5 (`createGemmaProvider` + +25 tests), Phase 19.6 (example app `useChat()` tab + docs).
+
+**Hard rules carried over:**
+- ADR is the spec. If it doesn't answer something, STOP and ask.
+- 124 existing tests must stay green after Phase 19.2.
+- Commit per sub-phase, not at end.
+- MIT attribution comment at top of any ported file (for Phase 19.3: `convertFinishReason` cites `@react-native-ai/llama` ai-sdk.ts:48–69; `prepareMessages` cites :93–225). Source still cloned at `/tmp/phase19-research/callstack-ai/packages/llama/src/ai-sdk.ts`.
+- No new dependencies beyond `@ai-sdk/provider` (peer, already added) and `ai` (example app only, Phase 19.6).
+- Do NOT touch `docs/ADR/` or `docs/RESEARCH/`.
+
+---
+
+## Session — 2026-04-16 (Phase 19.2 — runToolLoop extracted)
+
+### What landed
+
+**Phase 19.2 — DONE**
+
+- New file `src/runToolLoop.ts`:
+  - Internal `RunToolLoopPart` discriminated union per Option C: `text-start/-delta/-end`, `reasoning-start/-delta/-end`, `tool-input-start/-delta/-end`, `tool-call`, `tool-result`, `finish`, `error`. No `@ai-sdk/provider` import; shapes mirror V3 stream parts but with our own names.
+  - `RunToolLoopDeps` ({engine, registry, executor}), `RunToolLoopConfig` (maxChainDepth, skillTimeout, skillRouting, maxToolsPerInvocation, activeCategories), `RunToolLoopInput` ({systemPrompt, messages, query}), `RunToolLoopResult` ({finalMessages, finishReason, usage, providerMetadata}).
+  - `runToolLoop(deps, config, input, onPart)` owns the full loop body previously in `AgentOrchestrator.sendMessage:115-222`. Preserves: BM25 routing, category filter, `validateToolCalls` + `extractToolCallsFromText` fallback, max-chain-depth fallback string, `tool_call_id` fallback generation, network-aware `executeSkill` with timeout, strip-thinking-from-tool-call-assistant-msg behavior.
+  - Module-level helpers `getToolsForQuery`, `skillsToToolDefs`, `checkConnectivity`, `executeSkill`, `withTimeout` moved out of the orchestrator class.
+  - For Phase 19.2 emission: `text-delta` from `onToken`, `tool-input-start` (with parameters) + `tool-call` + `tool-result` per skill, `finish` at return. `text-start/-end`, `reasoning-*`, `tool-input-delta/-end` defined in the union but not emitted yet (Phase 19.4 adapter will refine).
+- `src/AgentOrchestrator.ts` refactored: `sendMessage` is now a thin wrapper. Removed `getToolsForQuery`, `skillsToToolDefs`, `checkConnectivity`, `executeSkill`, `withTimeout`, `bm25` member, and the `'./BM25Scorer'` / `'./FunctionCallParser'` imports. Kept `buildSystemPrompt`, `checkContextWarning`, `reset`, `getContextUsage`, `setSystemPrompt`, `setActiveCategories`, `getActiveCategories`, `setSkillExecutor`, `setKnowledgeStore`. `SkillExecutor` type now sourced from `runToolLoop.ts` and re-exported from `AgentOrchestrator.ts` for backwards compat with `src/index.ts`.
+- `sendMessage` fan-out map (per the task brief): `text-delta → token`, `tool-input-start → skill_called` (parameters carried on the part), `tool-result → skill_result`, `finish → response`, `error → error`. Reasoning parts dropped silently.
+- `checkContextWarning` now runs **once** after `runToolLoop` returns, not per-iteration. For all 18 orchestrator tests this is behaviorally identical (they use one generate per sendMessage). For multi-iteration flows with mid-loop threshold crossings, the warning now fires at end-of-turn instead of mid-turn; this matches the ADR's "stream-start.warnings at call start" direction and is a small acceptable timing shift.
+- Behavioral note: the legacy `{ type: 'thinking' }` AgentEvent is no longer emitted (current code only fired it before each iteration to reset UI buffers; `useGemmaAgent`'s own `sendMessage`-start reset and the `skill_called`/`response` resets cover the same ground). The AgentEvent union still includes `thinking` so external type-consumers don't break. 124/124 tests green, `tsc --noEmit` clean.
+
+### Files Modified
+- `src/runToolLoop.ts` — new
+- `src/AgentOrchestrator.ts` — loop body extracted, imports/members/helpers removed
+- `docs/SESSION_LOG.md` — this entry
+
+### Next Session — Start Here
+
+**Pick up at Phase 19.3 (translation helpers under `src/ai/`).** The internal `RunToolLoopPart` + `RunToolLoopResult` shapes are ready to translate into V3.
+
+Phase 19.3 task list:
+1. `src/ai/convertFinishReason.ts` — port from `@react-native-ai/llama` ai-sdk.ts:48–69 (MIT). Input: our `RunToolLoopFinishReason` + `CompletionResult`. Output: `LanguageModelV3FinishReason`.
+2. `src/ai/prepareMessages.ts` — port from `@react-native-ai/llama` ai-sdk.ts:93–225 (MIT). Translate V3 `LanguageModelV3Prompt` → our `Message[]`. Cover all 7 `ToolResultOutput` variants.
+3. `src/ai/convertToolResultOutput.ts` — `SkillResult → ToolResultOutput` all 4 outbound variants (text/json/error-text/content+media).
+4. `src/ai/toolShapeBridge.ts` — V3 function tool `{ name, description, inputSchema }` → our `ToolDefinition` with `parameters` (the inputSchema→parameters rename fixing synthesis §1 pain #2).
+5. MIT attribution comment at top of any ported file citing the upstream path.
+
+Source cloned at `/tmp/phase19-research/callstack-ai/packages/llama/src/ai-sdk.ts`.
