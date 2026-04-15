@@ -8,6 +8,7 @@
 import type { InferenceEngine } from '../InferenceEngine';
 import { SkillRegistry } from '../SkillRegistry';
 import type { KnowledgeStore } from '../KnowledgeStore';
+import type { ModelManager } from '../ModelManager';
 import type { SkillExecutor } from '../runToolLoop';
 import {
   GemmaLanguageModel,
@@ -18,6 +19,7 @@ export type GemmaProviderConfig = {
   engine: InferenceEngine;
   registry?: SkillRegistry;
   knowledgeStore?: KnowledgeStore | null;
+  modelManager?: ModelManager | null;
   skillExecutor?: SkillExecutor | null;
   systemPrompt?: string;
   defaults?: GemmaLanguageModelDefaults;
@@ -50,6 +52,7 @@ export function createGemmaProvider(
       registry,
       executor: config.skillExecutor ?? null,
       knowledgeStore: config.knowledgeStore ?? null,
+      modelManager: config.modelManager ?? null,
       systemPrompt: config.systemPrompt,
       defaults: { ...(config.defaults ?? {}), ...(opts ?? {}) },
     });

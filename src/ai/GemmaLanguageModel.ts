@@ -18,6 +18,7 @@ import type {
 import type { InferenceEngine } from '../InferenceEngine';
 import type { SkillRegistry } from '../SkillRegistry';
 import type { KnowledgeStore } from '../KnowledgeStore';
+import type { ModelManager } from '../ModelManager';
 import type {
   RunToolLoopConfig,
   RunToolLoopInput,
@@ -52,6 +53,7 @@ export type GemmaLanguageModelConfig = {
   registry: SkillRegistry;
   executor?: SkillExecutor | null;
   knowledgeStore?: KnowledgeStore | null;
+  modelManager?: ModelManager | null;
   systemPrompt?: string;
   defaults?: GemmaLanguageModelDefaults;
 };
@@ -87,6 +89,7 @@ export class GemmaLanguageModel implements LanguageModelV3 {
   private registry: SkillRegistry;
   private executor: SkillExecutor | null;
   private knowledgeStore: KnowledgeStore | null;
+  private modelManager: ModelManager | null;
   private systemPrompt: string;
   private defaults: Required<GemmaLanguageModelDefaults>;
 
@@ -96,6 +99,7 @@ export class GemmaLanguageModel implements LanguageModelV3 {
     this.registry = config.registry;
     this.executor = config.executor ?? null;
     this.knowledgeStore = config.knowledgeStore ?? null;
+    this.modelManager = config.modelManager ?? null;
     this.systemPrompt = config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.defaults = {
       maxChainDepth: config.defaults?.maxChainDepth ?? DEFAULTS.maxChainDepth,
@@ -112,12 +116,28 @@ export class GemmaLanguageModel implements LanguageModelV3 {
     };
   }
 
-  async prepare(): Promise<void> {
-    if (!this.engine.isLoaded) {
-      throw new Error(
-        'GemmaLanguageModel.prepare: InferenceEngine has no model loaded. Call engine.loadModel(path) before prepare().',
-      );
+  async prepare(modelPath?: string): Promise<void> {
+    if (this.engine.isLoaded) {
+      return;
     }
+    if (modelPath) {
+      await this.engine.loadModel(modelPath);
+      return;
+    }
+    if (this.modelManager) {
+      const path =
+        this.modelManager.modelPath ?? (await this.modelManager.findModel());
+      if (!path) {
+        throw new Error(
+          'GemmaLanguageModel.prepare: ModelManager has no model on device. Call modelManager.download() first.',
+        );
+      }
+      await this.engine.loadModel(path);
+      return;
+    }
+    throw new Error(
+      'GemmaLanguageModel.prepare: no model loaded. Pass a path to prepare(modelPath), configure the provider with { modelManager }, or call engine.loadModel(path) yourself.',
+    );
   }
 
   async unload(): Promise<void> {
