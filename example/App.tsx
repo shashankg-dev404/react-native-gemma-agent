@@ -28,6 +28,7 @@ import { deviceLocationSkill } from '../skills/deviceLocation';
 import { readCalendarSkill } from '../skills/readCalendar';
 import { createLocalNotesSkill } from '../skills/localNotes';
 import { KnowledgeStore } from '../src/KnowledgeStore';
+import { AiSdkChatTab } from './src/AiSdkChatTab';
 
 // --- Config ---
 
@@ -104,7 +105,9 @@ function ChatScreen() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadTimeMs, setLoadTimeMs] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'chat' | 'logs'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'logs' | 'ai-sdk'>(
+    'chat',
+  );
   const [contextWarningFlash, setContextWarningFlash] = useState(false);
 
   const chatScrollRef = useRef<ScrollView>(null);
@@ -373,11 +376,26 @@ function ChatScreen() {
               Logs ({logs.length})
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'ai-sdk' && styles.tabActive]}
+            onPress={() => setActiveTab('ai-sdk')}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'ai-sdk' && styles.tabTextActive,
+              ]}
+            >
+              AI SDK
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Tab Content */}
         <View style={styles.tabContent}>
-          {activeTab === 'chat' ? (
+          {activeTab === 'ai-sdk' ? (
+            <AiSdkChatTab />
+          ) : activeTab === 'chat' ? (
             <ScrollView
               ref={chatScrollRef}
               style={styles.chatScroll}
@@ -442,8 +460,8 @@ function ChatScreen() {
           </View>
         )}
 
-        {/* Input */}
-        {showChat && (
+        {/* Input — hidden on AI SDK tab (it ships its own input) */}
+        {showChat && activeTab !== 'ai-sdk' && (
           <View style={styles.inputRow}>
             <TextInput
               style={styles.input}
