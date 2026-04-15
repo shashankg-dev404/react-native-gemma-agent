@@ -1105,3 +1105,60 @@ Phase 19.3 task list:
 5. MIT attribution comment at top of any ported file citing the upstream path.
 
 Source cloned at `/tmp/phase19-research/callstack-ai/packages/llama/src/ai-sdk.ts`.
+
+---
+
+## Session — 2026-04-16 (Phase 19.3 — V3 translation helpers)
+
+### What landed
+
+**Phase 19.3 — DONE**
+
+- Installed `@ai-sdk/provider ^3.0.8` as a devDependency so the new `src/ai/` files resolve V3 types. The peer dep entry stays optional in `package.json` so non-AI-SDK consumers pay no install cost.
+- `src/ai/convertFinishReason.ts` (MIT port, ai-sdk.ts:48–69):
+  - `convertFinishReason(result: CompletionResult, hadToolCalls: boolean): LanguageModelV3FinishReason` — 5 paths: hadToolCalls → `tool-calls`, stoppedEos → `stop`, stoppedLimit → `length`, contextFull → `length`, default → `other`.
+  - `convertRunToolLoopFinishReason(reason)` — direct map from our internal reason union to V3.
+- `src/ai/prepareMessages.ts` (MIT port, ai-sdk.ts:93–225):
+  - Returns `{ messages: Message[]; warnings: string[] }`.
+  - System → direct pass. User → concatenate text parts with `\n`, drop FilePart with warning. Assistant → collapse text + reasoning into one content string, collect tool-calls into `tool_calls` with empty content when present, convert assistant-embedded tool-result parts to tool-role messages (we emit those legitimately, so no drop-warning — diverges from upstream). Tool → one message per ToolResultPart.
+- `src/ai/convertToolResultOutput.ts`:
+  - `skillResultToToolOutput(result: SkillResult): LanguageModelV3ToolResultOutput` — 4 outbound: error → `error-text`, image → `content` with `image-data`, string result → `text`, nothing → `text: 'No result'`.
+  - `toolResultOutputToString(output)` — reusable helper for the 6 V3 inbound variants. Consumed by `prepareMessages` when building tool-role message content.
+- `src/ai/toolShapeBridge.ts` (our fix for callstackincubator/ai#201):
+  - `v3ToolToToolDefinition(tool)` — `inputSchema → parameters` rename, returns `{ tool, warnings }`. Missing/non-object inputSchema falls back to empty `properties` with a warning naming the tool.
+  - `separateProviderAndConsumerTools(tools, registry)` — returns skill tools from `registry.toToolDefinitions()`, consumer tools with V3 → ToolDefinition translation, and collision warnings where a consumer tool name matches a registered skill. Skills win.
+- 35 new tests across 4 files: `convertFinishReason.test.ts`, `convertToolResultOutput.test.ts`, `prepareMessages.test.ts`, `toolShapeBridge.test.ts`. 14 suites / 159 tests green (124 existing + 35 new). `tsc --noEmit` clean.
+
+### Files Modified
+- `src/ai/convertFinishReason.ts` — new
+- `src/ai/prepareMessages.ts` — new
+- `src/ai/convertToolResultOutput.ts` — new
+- `src/ai/toolShapeBridge.ts` — new
+- `src/__tests__/convertFinishReason.test.ts` — new
+- `src/__tests__/convertToolResultOutput.test.ts` — new
+- `src/__tests__/prepareMessages.test.ts` — new
+- `src/__tests__/toolShapeBridge.test.ts` — new
+- `package.json` — added `@ai-sdk/provider` to devDependencies
+- `package-lock.json`
+- `docs/SESSION_LOG.md` — this entry
+
+### Next Session — Start Here
+
+**Pick up at Phase 19.4 (`GemmaLanguageModel`).** Build `src/ai/GemmaLanguageModel.ts` implementing `LanguageModelV3` with `doGenerate` and `doStream`. Both sit on top of `runToolLoop` and emit V3 stream parts per ADR-006 §"Stream-part mapping".
+
+Phase 19.4 task list:
+1. `src/ai/GemmaLanguageModel.ts` — class with `specificationVersion: 'v3'`, `provider: 'gemma'`, `supportedUrls`, `prepare()`, `unload()`.
+2. `doStream` — translate V3 call options → `RunToolLoopInput` via `prepareMessages` + `separateProviderAndConsumerTools`; call `runToolLoop`; fan `RunToolLoopPart → LanguageModelV3StreamPart`: our `text-delta` → V3 `text-delta` with `text-start`/`text-end` bracketing, `tool-input-start` → V3 part with `providerExecuted`, `tool-call` → V3 part, `tool-result` → V3 part translated via `skillResultToToolOutput`, `finish` → V3 finish with `convertRunToolLoopFinishReason` + `providerMetadata.gemma`. Prepend `stream-start` with all accumulated warnings.
+3. `doGenerate` — single-shot variant; collect parts into `content: LanguageModelV3Content[]` and return as `LanguageModelV3GenerateResult`.
+4. Wire `abortSignal`: `options.abortSignal?.addEventListener('abort', () => engine.stopGeneration())` (fixes callstackincubator/ai#199).
+5. Wire `providerOptions.gemma` passthrough (maxChainDepth, skillRouting, activeCategories, maxToolsPerInvocation, enable_thinking, reasoning_format).
+6. Tests following ADR-006 §"Test plan" stream-part matrix — 9 scenarios.
+
+Rules (carry-forward):
+- ADR-006 is the spec; stop and ask if ambiguous.
+- No new deps beyond `@ai-sdk/provider` (already installed).
+- Don't touch `src/runToolLoop.ts`, `src/AgentOrchestrator.ts`, `src/InferenceEngine.ts`, `src/types.ts` without asking.
+- All 159 existing tests stay green.
+- One commit at the end.
+
+Source still at `/tmp/phase19-research/callstack-ai/packages/llama/src/ai-sdk.ts`. Reference lines for Phase 19.4: 333–349 (doGenerate content assembly), 520–624 (stream loop — do NOT port the literal `<think>` matching), 660–662 (abort wiring — port with the addEventListener fix).
