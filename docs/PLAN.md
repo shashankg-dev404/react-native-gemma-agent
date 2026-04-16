@@ -46,10 +46,10 @@ Competitors shipped this. Parity is table stakes now.
 ### Phase 20: Declarative `useLLM` Hook [P0 — URGENT, promoted from P2]
 `react-native-executorch` already ships this. Catch-up cost is low, pain of missing it is high.
 
-- [ ] `useLLM({ model, systemPrompt })` → `{ generate, stream, isReady, interrupt, isGenerating }`
-- [ ] `useLLM` without a Provider (internal singleton)
-- [ ] Lives alongside `useGemmaAgent` (same engine)
-- [ ] Quick-chat tab in example app in ≤8 lines
+- [x] `useLLM({ model, systemPrompt })` → `{ generate, stream, isReady, interrupt, isGenerating }`
+- [x] `useLLM` without a Provider (internal singleton)
+- [x] Lives alongside `useGemmaAgent` (same engine)
+- [x] Quick-chat tab in example app in ≤8 lines
 
 **Exit**: Parity with `react-native-executorch`'s `useLLM`.
 
