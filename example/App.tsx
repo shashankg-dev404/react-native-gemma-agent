@@ -30,6 +30,7 @@ import { createLocalNotesSkill } from '../skills/localNotes';
 import { KnowledgeStore } from '../src/KnowledgeStore';
 import { AiSdkChatTab } from './src/AiSdkChatTab';
 import { QuickChatTab } from './src/QuickChatTab';
+import { StructuredTab } from './src/StructuredTab';
 
 // --- Config ---
 
@@ -107,7 +108,7 @@ function ChatScreen() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadTimeMs, setLoadTimeMs] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<
-    'chat' | 'logs' | 'ai-sdk' | 'quick'
+    'chat' | 'logs' | 'ai-sdk' | 'quick' | 'structured'
   >('chat');
   const [contextWarningFlash, setContextWarningFlash] = useState(false);
 
@@ -403,6 +404,19 @@ function ChatScreen() {
               Quick
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'structured' && styles.tabActive]}
+            onPress={() => setActiveTab('structured')}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'structured' && styles.tabTextActive,
+              ]}
+            >
+              Struct
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Tab Content */}
@@ -411,6 +425,8 @@ function ChatScreen() {
             <AiSdkChatTab />
           ) : activeTab === 'quick' ? (
             <QuickChatTab />
+          ) : activeTab === 'structured' ? (
+            <StructuredTab />
           ) : activeTab === 'chat' ? (
             <ScrollView
               ref={chatScrollRef}
@@ -477,31 +493,34 @@ function ChatScreen() {
         )}
 
         {/* Input — hidden on AI SDK tab (it ships its own input) */}
-        {showChat && activeTab !== 'ai-sdk' && activeTab !== 'quick' && (
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.input}
-              value={input}
-              onChangeText={setInput}
-              placeholder="Ask something..."
-              placeholderTextColor="#666"
-              multiline
-              editable={!isProcessing}
-              onSubmitEditing={handleSend}
-            />
-            <TouchableOpacity
-              style={[styles.btnSend, isProcessing && styles.btnDisabled]}
-              onPress={handleSend}
-              disabled={isProcessing}
-            >
-              {isProcessing ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.btnText}>Send</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
+        {showChat &&
+          activeTab !== 'ai-sdk' &&
+          activeTab !== 'quick' &&
+          activeTab !== 'structured' && (
+            <View style={styles.inputRow}>
+              <TextInput
+                style={styles.input}
+                value={input}
+                onChangeText={setInput}
+                placeholder="Ask something..."
+                placeholderTextColor="#666"
+                multiline
+                editable={!isProcessing}
+                onSubmitEditing={handleSend}
+              />
+              <TouchableOpacity
+                style={[styles.btnSend, isProcessing && styles.btnDisabled]}
+                onPress={handleSend}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.btnText}>Send</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

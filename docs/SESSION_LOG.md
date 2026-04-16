@@ -1817,3 +1817,66 @@ The SDK is the catalog/convention layer. Bytes belong to model authors.
 1. Phase 23 (structured output API). Parity target: Ollama's `format: json | JSONSchema` and AI SDK's `generateObject`. Start with `generateStructured({ schema })` accepting a Zod schema; constrained decoding via llama.rn grammar hooks if exposed in rc.8, else retry-with-validation. Wire the AI SDK `generateObject` path once the underlying primitive works.
 2. On-device test before cutting v0.3.0: `adb push` one of the catalog GGUFs to `/data/local/tmp/`, run the example app, confirm the SHA-256 verification path is actually hit and succeeds against the pinned hash.
 
+
+## Session: 2026-04-16 (Phase 23 — structured output API + manual test cases for 21/22/23)
+
+### What landed
+
+**Phase 23 — DONE**
+
+- `src/StructuredOutput.ts` — new primitive `generateStructured<T>(engine, { schema, prompt, systemPrompt?, generateOptions?, maxRetries? })`. Accepts Zod schemas (detected via `'_def' in schema` + `safeParse`) or plain JSON Schema objects. Zod schemas convert to JSON Schema via a lazy `require('zod-to-json-schema')` so non-Zod users don't pay the install cost.
+- Core loop: drives `engine.generate` with `responseFormat: { type: 'json_schema', schema, strict: true }`. llama.rn rc.8 forwards that to llama.cpp's grammar sampler, so the vast majority of outputs parse on attempt 1. If parsing or validation fails, we append a user turn describing the specific error and retry up to `maxRetries` times (default 2 → 3 attempts total). Final failure throws with the last raw output truncated to 500 chars.
+- Fence stripping: handles `\`\`\`json ... \`\`\`` wrapped output and grabs the outermost `{...}` span as a fallback before `JSON.parse`. Small but catches the most common "model added prose" failure shape.
+- `src/InferenceEngine.ts` — `GenerateOptions.responseFormat` is forwarded to llama.rn as `response_format: { type: 'json_schema', json_schema: { schema, strict } }`. Also supports `{ type: 'json_object' }` pass-through and a `text` no-op. No other changes to the engine contract.
+- `src/types.ts` — new `ResponseFormat` union exported from `react-native-gemma-agent`.
+- `src/ai/GemmaLanguageModel.ts` — `doGenerate` and `doStream` branch on `options.responseFormat?.type === 'json'`. The JSON branch skips `runToolLoop` entirely and calls `generateStructured` directly. Output is a single `{ type: 'text', text: JSON.stringify(object) }` content part, which `generateObject` (AI SDK) then parses and validates via its own `asSchema` pipeline. When both `responseFormat: 'json'` and `tools` are passed, we emit an `other` warning and drop the tools — AI SDK treats structured output and tool calling as mutually exclusive.
+- `src/index.ts` — exports `generateStructured`, `toJsonSchema`, `isZodSchema`, `ResponseFormat`, and the input/result types.
+- `package.json` — `zod` and `zod-to-json-schema` added as optional peer deps. No new hard dependencies.
+- `example/src/StructuredTab.tsx` + fifth tab in `example/App.tsx` — demo screen that extracts `{ title, date, location?, attendees? }` from free text using a plain JSON Schema (keeps the example app zod-free). Shows the parsed object, surfaces validation errors inline, renders the `attempts` counter.
+
+**Tests**
+
+- `src/__tests__/StructuredOutput.test.ts` — 11 cases: `isZodSchema` detection (positive/negative), `toJsonSchema` passthrough + missing-peer-dep error, single-attempt happy path, retry on unparseable JSON, markdown-fence stripping, three-attempts-exhausted error payload, `maxRetries: 0` fail-fast, Zod-like `safeParse` round-trip via `jest.isolateModules`.
+- `src/__tests__/GemmaLanguageModel.test.ts` — 2 new cases: `doGenerate` with `responseFormat=json` forwards the schema to the engine as `response_format` with `strict: true`, skips tools, and returns the parsed JSON as a single text content part; second case confirms the "tools dropped" warning fires when tools + `responseFormat: 'json'` coexist.
+- `npm test` is 231/231 green across 19 suites (was 218/218 in 18). `npx tsc --noEmit` clean. `npm run build` clean.
+
+**ADR**
+
+- `docs/ADR/009-structured-output.md` — covers (1) why the primitive is standalone rather than only reachable via the AI SDK adapter, (2) why grammar-constrained decoding is primary and retry-with-validation is the safety net, (3) Zod primary / JSON Schema secondary with `_def` detection, (4) mutually-exclusive tool calling, (5) alternatives rejected (Ollama-style grammar-only, Ajv for JSON Schema validation, Zod as hard peer dep).
+
+**Manual test cases**
+
+- `docs/TEST_CASES.md` — appended Phase 21 (3 cases: gemma-4-e2b-it skill invocation, qwen-3.5-4b reasoning stripping, smollm2-1.7b graceful no-tool-calling degradation), Phase 22 (3 cases: adb-pushed GGUF discovery without re-download, CLI download + SHA-256 verify + push hint, corrupted cache detection), Phase 23 (2 cases: Zod `generateStructured` round-trip, Vercel `generateObject` through the adapter). Each case includes watch-outs for false-pass shapes (e.g. tool-call JSON leaking into chat, reasoning trace bleeding into visible reply, `finishReason` not reflecting structured-output path).
+
+### Decisions
+
+1. **Primitive lives at top level, not under `/ai`.** The AI SDK subpath is gated on `@ai-sdk/provider`; forcing structured output through it would cut off raw `useLLM` and direct-engine consumers. The primitive takes an `InferenceEngine` directly and has no adapter dependency.
+2. **Grammar decoding primary, retry-with-validation secondary.** llama.rn rc.8 exposes `response_format` with `type: 'json_schema'`, which is the correct wiring. The retry loop is a belt-and-suspenders fallback for the edge cases where the sampler still produces off-shape output (markdown fences, prose contamination).
+3. **JSON Schema validation stops at "is an object".** Consumers who want deep structural validation wrap their JSON Schema in Zod. Shipping Ajv (~200KB) for a capability Zod covers would be dead weight for 90% of users.
+4. **Vercel adapter warns and drops tools under `responseFormat: 'json'`.** Matches AI SDK's own stance (`generateObject` does not accept `tools`). The warning surfaces in the adapter's returned `warnings` array so consumers can pick it up without debugging.
+5. **`maxRetries: 2` default.** Three attempts total is the Ollama convention; callers who need fail-fast pass `maxRetries: 0`.
+
+### Files created
+
+- `src/StructuredOutput.ts`
+- `src/__tests__/StructuredOutput.test.ts`
+- `example/src/StructuredTab.tsx`
+- `docs/ADR/009-structured-output.md`
+
+### Files modified
+
+- `src/types.ts` — `ResponseFormat`, `GenerateOptions.responseFormat`
+- `src/InferenceEngine.ts` — forward `response_format` to llama.rn
+- `src/ai/GemmaLanguageModel.ts` — JSON response-format branch + `runStructured` helper
+- `src/index.ts` — new exports
+- `src/__tests__/GemmaLanguageModel.test.ts` — 2 new cases
+- `package.json` — optional peer deps
+- `example/App.tsx` — fifth tab wiring
+- `docs/PLAN.md` — Phase 23 checked off
+- `docs/TEST_CASES.md` — Phase 21/22/23 manual cases
+- `docs/SESSION_LOG.md` — this entry
+
+### What to pick up next
+
+1. On-device execution of the Phase 21/22/23 test cases from `docs/TEST_CASES.md`. Push a GGUF, load, run each case end-to-end, mark pass/fail. The watch-outs matter — false passes are the failure mode, not literal crashes.
+2. If Phase 23 passes on device, cut `v0.3.0`. Five phases (19–23) land together as the v0.3.0 release per PLAN.md.

@@ -27,6 +27,7 @@ import type {
 } from '../runToolLoop';
 import { runToolLoop } from '../runToolLoop';
 import { buildSystemPromptWithNotes } from '../buildSystemPrompt';
+import { generateStructured } from '../StructuredOutput';
 import { prepareMessages } from './prepareMessages';
 import { separateProviderAndConsumerTools } from './toolShapeBridge';
 import {
@@ -147,6 +148,10 @@ export class GemmaLanguageModel implements LanguageModelV3 {
   async doGenerate(
     options: LanguageModelV3CallOptions,
   ): Promise<LanguageModelV3GenerateResult> {
+    if (options.responseFormat?.type === 'json') {
+      return this.doGenerateStructured(options);
+    }
+
     const prelude = await this.prepareCall(options);
     const parts: RunToolLoopPart[] = [];
 
@@ -185,6 +190,10 @@ export class GemmaLanguageModel implements LanguageModelV3 {
   async doStream(
     options: LanguageModelV3CallOptions,
   ): Promise<LanguageModelV3StreamResult> {
+    if (options.responseFormat?.type === 'json') {
+      return this.doStreamStructured(options);
+    }
+
     const prelude = await this.prepareCall(options);
     const engine = this.engine;
     const registry = this.registry;
@@ -317,6 +326,100 @@ export class GemmaLanguageModel implements LanguageModelV3 {
 
   private wireAbort(signal?: AbortSignal): () => void {
     return wireAbortToEngine(this.engine, signal);
+  }
+
+  private async doGenerateStructured(
+    options: LanguageModelV3CallOptions,
+  ): Promise<LanguageModelV3GenerateResult> {
+    const { rawText, warnings, usage } = await this.runStructured(options);
+    const content: LanguageModelV3Content[] = [{ type: 'text', text: rawText }];
+    return {
+      content,
+      finishReason: { unified: 'stop', raw: 'stop' },
+      usage,
+      warnings,
+    };
+  }
+
+  private async doStreamStructured(
+    options: LanguageModelV3CallOptions,
+  ): Promise<LanguageModelV3StreamResult> {
+    const { rawText, warnings, usage } = await this.runStructured(options);
+    const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      start(controller) {
+        controller.enqueue({ type: 'stream-start', warnings });
+        const id = 'text-structured';
+        controller.enqueue({ type: 'text-start', id });
+        controller.enqueue({ type: 'text-delta', id, delta: rawText });
+        controller.enqueue({ type: 'text-end', id });
+        controller.enqueue({
+          type: 'finish',
+          finishReason: { unified: 'stop', raw: 'stop' },
+          usage,
+        });
+        controller.close();
+      },
+    });
+    return { stream };
+  }
+
+  private async runStructured(
+    options: LanguageModelV3CallOptions,
+  ): Promise<{
+    rawText: string;
+    warnings: SharedV3Warning[];
+    usage: import('@ai-sdk/provider').LanguageModelV3Usage;
+  }> {
+    const format = options.responseFormat;
+    if (!format || format.type !== 'json') {
+      throw new Error('runStructured: responseFormat.type must be "json"');
+    }
+
+    const { messages, warnings: prepareWarnings } = prepareMessages(
+      options.prompt,
+    );
+    const query = extractLatestUserQuery(options.prompt);
+    const systemPrompt = await buildSystemPromptWithNotes(
+      this.systemPrompt,
+      this.registry,
+      this.knowledgeStore,
+    );
+
+    const userParts: string[] = [];
+    userParts.push(query);
+    for (const msg of messages) {
+      if (msg.role !== 'user') continue;
+      if (!userParts.includes(msg.content)) {
+        userParts.push(msg.content);
+      }
+    }
+    const prompt = userParts.filter(Boolean).join('\n\n');
+
+    const warningStrings = [...prepareWarnings];
+    if (options.tools && options.tools.length > 0) {
+      warningStrings.push(
+        'Tools are ignored when responseFormat is "json" — structured output and tool calling are mutually exclusive',
+      );
+    }
+
+    const schema: Record<string, unknown> =
+      (format.schema as Record<string, unknown>) ?? {};
+
+    const abortCleanup = wireAbortToEngine(this.engine, options.abortSignal);
+    try {
+      const result = await generateStructured(this.engine, {
+        schema,
+        prompt,
+        systemPrompt,
+      });
+      return {
+        rawText: JSON.stringify(result.object),
+        warnings: toV3Warnings(warningStrings),
+        usage: buildV3Usage({ promptTokens: 0, completionTokens: 0 }),
+      };
+    } finally {
+      abortCleanup();
+    }
   }
 }
 

@@ -180,6 +180,21 @@ export class InferenceEngine {
         completionParams.tool_choice = options.toolChoice ?? 'auto';
       }
 
+      if (options?.responseFormat) {
+        const rf = options.responseFormat;
+        if (rf.type === 'json_schema') {
+          completionParams.response_format = {
+            type: 'json_schema',
+            json_schema: {
+              strict: rf.strict ?? true,
+              schema: rf.schema,
+            },
+          };
+        } else if (rf.type === 'json_object') {
+          completionParams.response_format = { type: 'json_object' };
+        }
+      }
+
       const result: NativeCompletionResult = await this.context.completion(
         completionParams as any,
         (data: TokenData) => {

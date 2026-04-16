@@ -1,0 +1,238 @@
+import { generateStructured, isZodSchema, toJsonSchema } from '../StructuredOutput';
+import type {
+  CompletionResult,
+  ContextUsage,
+  GenerateOptions,
+  Message,
+  TokenEvent,
+} from '../types';
+
+class MockEngine {
+  isLoaded = true;
+  isGenerating = false;
+  private responses: CompletionResult[] = [];
+  private callIndex = 0;
+  generateCallArgs: Array<{ messages: Message[]; options?: GenerateOptions }> =
+    [];
+
+  pushResponseText(content: string): void {
+    this.responses.push({
+      text: content,
+      content,
+      reasoning: null,
+      toolCalls: [],
+      timings: {
+        promptTokens: 10,
+        promptMs: 1,
+        promptPerSecond: 10,
+        predictedTokens: 20,
+        predictedMs: 1,
+        predictedPerSecond: 20,
+      },
+      stoppedEos: true,
+      stoppedLimit: false,
+      contextFull: false,
+    });
+  }
+
+  async generate(
+    messages: Message[],
+    options?: GenerateOptions,
+    _onToken?: (e: TokenEvent) => void,
+  ): Promise<CompletionResult> {
+    this.generateCallArgs.push({ messages, options });
+    if (this.callIndex >= this.responses.length) {
+      throw new Error('MockEngine: no more responses queued');
+    }
+    return this.responses[this.callIndex++];
+  }
+
+  getContextUsage(): ContextUsage {
+    return { used: 0, total: 4096, percent: 0 };
+  }
+
+  async stopGeneration(): Promise<void> {}
+  async unload(): Promise<void> {}
+}
+
+describe('isZodSchema', () => {
+  it('returns false for plain JSON Schema', () => {
+    expect(isZodSchema({ type: 'object', properties: {} })).toBe(false);
+  });
+
+  it('returns true for an object with _def and safeParse', () => {
+    const fake = {
+      _def: { typeName: 'ZodObject' },
+      safeParse: (_: unknown) => ({ success: true, data: {} }),
+      parse: (_: unknown) => ({}),
+    };
+    expect(isZodSchema(fake)).toBe(true);
+  });
+
+  it('returns false when safeParse is missing even if _def is present', () => {
+    expect(isZodSchema({ _def: {} })).toBe(false);
+  });
+});
+
+describe('toJsonSchema', () => {
+  it('passes through a plain JSON Schema unchanged', () => {
+    const schema = { type: 'object', properties: { x: { type: 'number' } } };
+    expect(toJsonSchema(schema as Record<string, unknown>)).toBe(schema);
+  });
+
+  it('throws a clear error when a Zod schema is passed but zod-to-json-schema is missing', () => {
+    const fake = {
+      _def: { typeName: 'ZodObject' },
+      safeParse: () => ({ success: true, data: {} }),
+      parse: () => ({}),
+    };
+    expect(() => toJsonSchema(fake)).toThrow(
+      /zod-to-json-schema.*not installed/,
+    );
+  });
+});
+
+const schema = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    count: { type: 'number' },
+  },
+  required: ['title', 'count'],
+};
+
+describe('generateStructured', () => {
+  it('returns a parsed object on first attempt when JSON is valid', async () => {
+    const engine = new MockEngine();
+    engine.pushResponseText('{"title":"hello","count":3}');
+
+    const result = await generateStructured<{ title: string; count: number }>(
+      engine as never,
+      { schema, prompt: 'extract' },
+    );
+
+    expect(result.object).toEqual({ title: 'hello', count: 3 });
+    expect(result.attempts).toBe(1);
+    expect(engine.generateCallArgs.length).toBe(1);
+    const opts = engine.generateCallArgs[0].options;
+    expect(opts?.responseFormat).toEqual({
+      type: 'json_schema',
+      schema,
+      strict: true,
+    });
+  });
+
+  it('retries when the model first emits unparseable text, then succeeds', async () => {
+    const engine = new MockEngine();
+    engine.pushResponseText('this is not json');
+    engine.pushResponseText('{"title":"retry","count":1}');
+
+    const result = await generateStructured<{ title: string; count: number }>(
+      engine as never,
+      { schema, prompt: 'extract' },
+    );
+
+    expect(result.object).toEqual({ title: 'retry', count: 1 });
+    expect(result.attempts).toBe(2);
+    expect(engine.generateCallArgs.length).toBe(2);
+    const retryMessages = engine.generateCallArgs[1].messages;
+    const lastMessage = retryMessages[retryMessages.length - 1];
+    expect(lastMessage.role).toBe('user');
+    expect(lastMessage.content).toMatch(/failed validation/i);
+  });
+
+  it('strips markdown fences when the model wraps JSON in ```json', async () => {
+    const engine = new MockEngine();
+    engine.pushResponseText('```json\n{"title":"hi","count":2}\n```');
+
+    const result = await generateStructured<{ title: string; count: number }>(
+      engine as never,
+      { schema, prompt: 'extract' },
+    );
+
+    expect(result.object).toEqual({ title: 'hi', count: 2 });
+    expect(result.attempts).toBe(1);
+  });
+
+  it('throws with the last raw output after exhausting retries', async () => {
+    const engine = new MockEngine();
+    engine.pushResponseText('not json');
+    engine.pushResponseText('still not json');
+    engine.pushResponseText('absolutely not json');
+
+    await expect(
+      generateStructured(engine as never, {
+        schema,
+        prompt: 'x',
+        maxRetries: 2,
+      }),
+    ).rejects.toThrow(/failed after 3 attempts.*absolutely not json/s);
+  });
+
+  it('respects maxRetries=0 by throwing after a single bad attempt', async () => {
+    const engine = new MockEngine();
+    engine.pushResponseText('not json');
+
+    await expect(
+      generateStructured(engine as never, {
+        schema,
+        prompt: 'x',
+        maxRetries: 0,
+      }),
+    ).rejects.toThrow(/failed after 1 attempts/);
+  });
+
+  it('validates with a Zod-like safeParse and retries on validation failure', async () => {
+    jest.isolateModules(() => {
+      jest.doMock(
+        'zod-to-json-schema',
+        () => ({
+          zodToJsonSchema: (_s: unknown) => schema,
+        }),
+        { virtual: true },
+      );
+    });
+
+    const engine = new MockEngine();
+    engine.pushResponseText('{"title":"hi","count":"not-a-number"}');
+    engine.pushResponseText('{"title":"hi","count":5}');
+
+    let attempts = 0;
+    const fakeZod = {
+      _def: { typeName: 'ZodObject' },
+      safeParse: (data: unknown) => {
+        attempts++;
+        const d = data as { count?: unknown };
+        if (typeof d.count === 'number') {
+          return { success: true, data: d } as const;
+        }
+        return {
+          success: false,
+          error: { message: 'count must be a number' },
+        } as const;
+      },
+      parse: (_: unknown) => ({}),
+    };
+
+    let freshGenerateStructured: typeof generateStructured;
+    jest.isolateModules(() => {
+      jest.doMock(
+        'zod-to-json-schema',
+        () => ({
+          zodToJsonSchema: (_s: unknown) => schema,
+        }),
+        { virtual: true },
+      );
+      freshGenerateStructured = require('../StructuredOutput').generateStructured;
+    });
+
+    const result = await freshGenerateStructured!(engine as never, {
+      schema: fakeZod,
+      prompt: 'extract',
+    });
+
+    expect(result.object).toEqual({ title: 'hi', count: 5 });
+    expect(result.attempts).toBe(2);
+    expect(attempts).toBe(2);
+  });
+});

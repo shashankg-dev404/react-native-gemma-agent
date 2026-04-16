@@ -96,6 +96,18 @@ export type CompletionResult = {
   contextFull: boolean;
 };
 
+export type ResponseFormat =
+  | { type: 'text' }
+  | {
+      type: 'json_object';
+    }
+  | {
+      type: 'json_schema';
+      /** JSON Schema the output must conform to. Forwarded to llama.rn constrained decoding. */
+      schema: Record<string, unknown>;
+      strict?: boolean;
+    };
+
 export type GenerateOptions = {
   /** Max tokens to generate */
   maxTokens?: number;
@@ -114,6 +126,8 @@ export type GenerateOptions = {
   /** Forward to llama.rn to enable thinking/reasoning output */
   enable_thinking?: boolean;
   reasoning_format?: 'none' | 'deepseek' | 'qwen';
+  /** Constrain output to a JSON schema via llama.rn grammar decoding */
+  responseFormat?: ResponseFormat;
 };
 
 export type TokenEvent = {

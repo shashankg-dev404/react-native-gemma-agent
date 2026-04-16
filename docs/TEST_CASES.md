@@ -1163,6 +1163,202 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 
 ---
 
+## Phase 21 — Multi-model support
+
+> Scope: the high-signal cases only. Catalog metadata and `resolveModelConfig()` correctness are covered by `src/__tests__/ModelRegistry.test.ts`. What unit tests cannot verify: does each model actually run end-to-end on device, does tool calling fire where the registry says it should, and do models with no tool calling degrade gracefully.
+>
+> Setup: every case starts from the app installed on a Pixel 8 / S23 class device, internet online, relevant GGUF already pushed to `/data/local/tmp/<filename>` (see TC-22.1 for the push step). Swap `MODEL_CONFIG` in `example/App.tsx` to the model under test (or resolve the registry ID through `resolveModelConfig`).
+
+### TC-21.1: gemma-4-e2b-it answers and invokes one skill
+**Precondition**: `MODEL_CONFIG` resolves to `gemma-4-e2b-it`. Model file present at `/data/local/tmp/gemma-4-E2B-it-Q4_K_M.gguf`. Skills loaded (calculator among them).
+**Steps**:
+1. Load model from the **Chat** tab.
+2. Send `What is 234 * 567?`.
+
+**Expected**:
+- Response contains `132678`.
+- Logs tab shows `Calling skill: calculator({"expression":"234*567"})` (or an equivalent arithmetic expression).
+- Skill result appears before the final assistant bubble.
+
+**Watch-outs / false-pass shapes**:
+- Model answers `132678` from parametric memory without invoking the skill — `Calling skill: calculator` is MISSING. Fail the case: the point is to prove the skill path fires, not that Gemma can multiply.
+- Tool-call JSON leaks into the visible chat bubble (`{"tool_call":...}` appears as assistant text). Fail: means the assistant-with-tool_calls content-stripping regressed.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-21.2: qwen-3.5-4b reasoning trace stays out of the user-visible reply
+**Precondition**: Qwen 3.5 4B GGUF pushed to `/data/local/tmp/Qwen3.5-4B-Q4_K_M.gguf`. `MODEL_CONFIG` resolves to `qwen-3.5-4b`. Provider/useLLM left at default system prompt.
+**Steps**:
+1. Load model.
+2. Send `If a train leaves at 14:20 and arrives at 16:55, how long was the journey? Think step by step.`
+
+**Expected**:
+- Final assistant bubble contains a single answer (`2 hours 35 minutes` or equivalent) without a `<think>...</think>` block, without numbered "Step 1 / Step 2" scratch work, and without the raw CoT.
+- `result.reasoning` is populated in the engine (visible via **Logs** if the log entry includes reasoning length, or via `engine.getInfo()` in a debug harness). The reasoning content is captured, not merely dropped.
+
+**Watch-outs / false-pass shapes**:
+- Chat bubble shows both the reasoning and the final answer concatenated. Fail: the reasoning-format stripping expected from `reasoningFormat: 'qwen'` regressed.
+- Response is a single sentence `2h 35m` that skipped reasoning entirely — possible when Qwen's thinking mode is off by default in the chat template. Not an automatic fail, but inspect logcat for the reasoning field; if it's empty on every turn, the `enable_thinking` / `reasoning_format` passthrough in `InferenceEngine.generate` is not reaching the native layer.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-21.3: smollm2-1.7b (no tool calling) chats and degrades gracefully on a tool-leaning prompt
+**Precondition**: SmolLM 2 1.7B pushed to `/data/local/tmp/smollm2-1.7b-instruct-Q4_K_M.gguf`. `MODEL_CONFIG` resolves to `smollm2-1.7b`. Registry entry has `toolCalling: false`.
+**Steps**:
+1. Load model.
+2. From the **Chat** tab (agent mode, skills loaded) send `What is the current time in Mumbai?` — a prompt that would normally pull a skill.
+3. Send a plain chat turn: `Tell me one short fact about Saturn.`
+
+**Expected**:
+- Step 2: model answers in prose (e.g. "I can't access live data"), does NOT emit a `tool_call` JSON, and the assistant bubble contains the prose reply. No skill invocation in **Logs**.
+- Step 3: normal chat reply, single bubble, no tool-call artifacts.
+
+**Watch-outs / false-pass shapes**:
+- Model emits a literal `{"tool_call": {...}}` string in the chat bubble — means the assistant treats the tool schema as output instructions but the model can't actually emit tool calls. This was the Hammer 2.1 / Llama 1B failure mode. Fail.
+- App crashes or stalls on the tool-leaning turn — the skill system should never receive a call from a `toolCalling: false` model. Fail.
+
+**Result**: [ ] Pass / [ ] Fail
+
+---
+
+## Phase 22 — Catalog hardening + pinned llama.rn
+
+> Scope: prove the on-device discovery + download + verification flow works end-to-end. Unit tests cover `buildHuggingFaceUrl` and `assertChecksumMatches` as pure functions; the integration path (RNFS download, SHA-256 over the actual file, error surfacing) needs a real device.
+
+### TC-22.1: adb-pushed GGUF is discovered without re-download
+**Precondition**: Fresh install of the example app. `MODEL_CONFIG` resolves to `gemma-4-e2b-it`.
+**Steps**:
+1. On the dev machine: `npx react-native-gemma-agent pull gemma-4-e2b-it`. Let it verify SHA-256 and print the `adb push` hint.
+2. Run the printed `adb push <cache-path> /data/local/tmp/gemma-4-E2B-it-Q4_K_M.gguf`.
+3. Open the app. From the **Chat** tab tap **Load Model** (not **Download**).
+
+**Expected**:
+- **Logs** tab shows `Model found at /data/local/tmp/` within ~200ms. No "Downloading" progress bar appears.
+- Model load completes and the chat tab becomes interactive.
+- No network egress during load (verify in Android Studio profiler if paranoid).
+
+**Watch-outs / false-pass shapes**:
+- App falls through to the download path even though the file is present — means `findModel()` missed the `/data/local/tmp/` fallback or the CLI wrote to the wrong filename.
+- Model loads but the file at `/data/local/tmp/` is 0 bytes or truncated — means the `adb push` silently failed. Compare the on-device `stat` size against the CLI's cached file.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-22.2: CLI downloads, verifies SHA-256, prints the push hint
+**Precondition**: Clean `~/.cache/react-native-gemma-agent/` on the dev machine. Internet online.
+**Steps**:
+1. `rm -rf ~/.cache/react-native-gemma-agent/models/gemma-4-e2b-it/`.
+2. Run `npx react-native-gemma-agent pull gemma-4-e2b-it`.
+
+**Expected**:
+- Progress updates print on stderr or stdout (bytes / percent); the download lands at `~/.cache/react-native-gemma-agent/models/gemma-4-e2b-it/gemma-4-E2B-it-Q4_K_M.gguf`.
+- After the download, a `SHA-256 OK` or equivalent success line appears (check the CLI's actual wording).
+- Final output includes `adb push <absolute-cache-path> /data/local/tmp/gemma-4-E2B-it-Q4_K_M.gguf`.
+- Exit code 0.
+
+**Watch-outs / false-pass shapes**:
+- CLI prints "done" but skips the SHA check (possible if the registry entry lost its `sha256` field in a refactor). Fail — the whole point of the hardening is tamper-evidence.
+- URL in flight uses `/resolve/main/` instead of `/resolve/<commitSha>/` (visible in a network log). Fail — reproducibility guarantee broken.
+- File is downloaded but is 0 bytes and the SHA check "passes" against a bogus empty-file hash. Fail — indicates the hash lookup regressed to an unrelated value.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-22.3: Corrupted cache file is detected, partial is deleted, error is clear
+**Precondition**: Run TC-22.2 first so the cache file exists.
+**Steps**:
+1. Corrupt the cache file: `dd if=/dev/urandom of=~/.cache/react-native-gemma-agent/models/gemma-4-e2b-it/gemma-4-E2B-it-Q4_K_M.gguf bs=1 count=16 seek=$(($(stat -f%z ~/.cache/react-native-gemma-agent/models/gemma-4-e2b-it/gemma-4-E2B-it-Q4_K_M.gguf) - 16)) conv=notrunc` (on macOS). (Goal: flip the last 16 bytes.)
+2. Re-run `npx react-native-gemma-agent pull gemma-4-e2b-it`.
+
+**Expected**:
+- CLI either (a) detects the existing file's hash is wrong and re-downloads, or (b) redownloads unconditionally and then hits a mismatch on the fresh download only if the server bytes themselves drift (shouldn't happen with a pinned commit SHA). Either path ends clean.
+- If the flow is configured to trust the cached file and the corruption is downstream, the subsequent `RNFS.hash` on the on-device copy will catch it. Either way, a SHA-256 mismatch surfaces with BOTH the expected and the actual hash in the error message. The partial / bad file is deleted from cache before exit.
+- Exit code is non-zero on mismatch; zero on clean re-download.
+
+**Watch-outs / false-pass shapes**:
+- Bad file silently survives in the cache — means the delete-on-mismatch branch did not run.
+- Error message shows only "SHA-256 mismatch" with no hex, so the user can't tell whether it's their corruption or a registry drift. Fail: the assertChecksumMatches contract requires both hashes.
+- CLI re-downloads and overwrites without complaining, hiding the corruption — acceptable if and only if the post-download SHA verify still runs and passes against the pinned hash.
+
+**Result**: [ ] Pass / [ ] Fail
+
+---
+
+## Phase 23 — Structured output API
+
+> Scope: the two paths consumers will actually exercise — the raw primitive and the Vercel `generateObject` adapter wiring. Unit tests cover schema detection, fence stripping, retry loop, and provider-side warning emission.
+
+### TC-23.1: `generateStructured` with a Zod schema returns a validated object
+**Precondition**: Model loaded on device. `zod` and `zod-to-json-schema` installed in `example/`. Add a debug button in `StructuredTab.tsx` (or temporarily in `App.tsx`) that calls:
+
+```ts
+import { z } from 'zod';
+import { generateStructured } from 'react-native-gemma-agent';
+
+const schema = z.object({
+  title: z.string(),
+  date: z.string(),
+  attendees: z.array(z.string()).optional(),
+});
+
+const result = await generateStructured(engine, {
+  schema,
+  prompt: 'Dinner with Priya and Arjun on Saturday 8pm at Bombay Canteen',
+});
+console.log('[TC-23.1]', JSON.stringify(result));
+```
+
+**Steps**:
+1. Trigger the debug call.
+2. Inspect logcat (`adb logcat *:S ReactNativeJS:V`) and the on-screen result.
+
+**Expected**:
+- Log line contains `object: { title: "...", date: "...", attendees: [...] }` with sensible values pulled from the input text.
+- `attempts` is `1` (native grammar decoding succeeded on the first try).
+- No exceptions on the JS side; the call resolves within the usual generate timing.
+
+**Watch-outs / false-pass shapes**:
+- `attempts` is `2` or `3` on every run, suggesting the grammar decoding path isn't wired correctly and we're falling through to the retry-only fallback. Check that `response_format` is being forwarded in the completion call (logcat should show the native params).
+- Result parses but `attendees` is missing/empty when the prompt explicitly names two people — means the model obeyed the schema but the prompt engineering isn't pulling required fields. Not an SDK bug, but note it.
+- Throws "zod-to-json-schema not installed" despite the peer dep being present in `example/package.json` — means the lazy `require` path can't find the hoisted copy; bump the install location or fall back to `require.resolve` with explicit paths.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-23.2: Vercel `generateObject` round-trip through our provider
+**Precondition**: Model loaded. `ai` and `zod` installed in `example/`. Provider wired via `createGemmaProvider`. Add a temporary button in `AiSdkChatTab.tsx`:
+
+```ts
+import { generateObject } from 'ai';
+import { z } from 'zod';
+
+const { object } = await generateObject({
+  model: provider('gemma-4-e2b'),
+  schema: z.object({
+    cityName: z.string(),
+    population: z.number(),
+    country: z.string(),
+  }),
+  prompt: 'Give me basic facts about Mumbai.',
+});
+console.log('[TC-23.2]', object);
+```
+
+**Steps**:
+1. Tap the debug button.
+2. Watch logcat for the tagged line and confirm the on-screen state renders the object.
+
+**Expected**:
+- `object` has all three fields with correct types (`cityName: string`, `population: number`, `country: 'India'` or similar).
+- Ollama-style finish reason mapping holds: the underlying provider call resolved with `finishReason.unified === 'stop'`.
+- No `tools` warnings in the AI SDK response (we didn't pass any tools).
+
+**Watch-outs / false-pass shapes**:
+- `NoObjectGeneratedError` thrown despite the model producing plausible JSON — likely means our provider returned the raw JSON as a text content part, but the text contains a leading/trailing prose that fence-stripping missed. Inspect the raw text part in the AI SDK debug logs.
+- `object.population` is a string ("20000000") because grammar constraints treated `number` as a JSON number but the model emitted it quoted; AI SDK's `safeValidateTypes` should fail in that case. Fail on our side only if the primitive's retry path also gave up — the AI SDK itself does not retry.
+- Provider silently routes the call through `runToolLoop` (skills appear in the tool field). Fail: the `responseFormat === 'json'` branch in `doGenerate` was bypassed.
+
+**Result**: [ ] Pass / [ ] Fail
+
+---
+
 ## Regression Tests (Run Before Every Release)
 
 | # | Test | Phase |
