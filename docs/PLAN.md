@@ -66,18 +66,33 @@ Decouple from the Gemma brand in code. Keep package name for SEO.
 **New ADR**: `007-multi-model-support.md`
 **Dropped**: Hammer 2.1 (doesn't exist), MobileLLM-Pro (no GGUF support), GLM 5.1 (too large for mobile)
 
-### Phase 22: Prebuilt Model Catalog + Pinned llama.rn [P0]
-Zero-friction model pull. Also fixes a real bug surface: llama.rn needs a post-Gemma-4-fixes commit or users hit `--chat-template` throughput regressions and garbled output on `-nkvo`.
+### Phase 22: Catalog Hardening + Pinned llama.rn [P0]
+Make the existing `ModelRegistry` reproducible and tamper-evident, and pin `llama.rn` to a Gemma-4-stable build. The SDK is a catalog/convention layer, not a host: byte storage stays with upstream model authors on HuggingFace.
 
-- [ ] Host verified GGUF manifests (GitHub Releases tier-free)
-- [ ] `ModelCatalog` with SHA-256 checksums
-- [ ] CLI: `npx react-native-gemma-agent pull gemma-4-e2b-it`
-- [ ] Auto-quant selection (Q4_K_M / Q5_K_M / Q8) based on device RAM
-- [ ] **Pin llama.rn to a known-good commit** (post-Gemma-4 tokenizer + streaming fixes); document required `--chat-template` and disallowed flags (`-nkvo`)
-- [ ] Verify conversion toolchain (`convert_hf_to_gguf` multimodal tensor-name fix)
+- [x] Add `commitSha` to each `ModelRegistryEntry`; URL becomes `/resolve/{sha}/{filename}` instead of `/resolve/main/`
+- [x] Add `sha256` to each `ModelRegistryEntry`; populate from upstream HF for the 7 catalog entries
+- [x] SHA-256 verification helper in `ModelManager.download` (only runs when catalog supplies a hash; degrades gracefully for custom `ModelConfig`)
+- [x] CLI `bin` entry: `npx react-native-gemma-agent pull <id>` — downloads from upstream HF via pinned SHA, verifies SHA-256, caches at `~/.cache/react-native-gemma-agent/models/<id>/<filename>`, prints `adb push <path> /data/local/tmp/<filename>` hint
+- [x] Pin `llama.rn` to `>=0.12.0-rc.8 <0.13.0` in `package.json` (rc.8 syncs llama.cpp to b8771, the Gemma-4-stable build per upstream consensus on 2026-04-12)
+- [x] Custom `ModelConfig` path stays untouched: devs hosting their own GGUFs (own R2/S3/CDN) just pass `{ repoId, filename, expectedSize, checksum? }`
 
-**Exit**: `useModelDownload('gemma-4-e2b-it')` pulls from our catalog, verifies, loads with zero HF token.
-**New ADR**: `008-llamarn-version-pinning.md`
+**Exit**: `useModelDownload('gemma-4-e2b-it')` resolves to the pinned SHA, downloads, verifies SHA-256, loads. CLI pre-fetch + `adb push` cuts dev iteration from "download 3GB on every fresh install" to one-time push.
+
+**New ADR**: `008-llamarn-version-pinning-and-catalog-hosting.md` (covers both decisions: llama.rn pin choice + why the catalog references rather than hosts)
+
+**Deferred to v0.4 (Phase 22.5)**: auto-quant selection (Q4_K_M / Q5_K_M / Q8 by device RAM). Adding 2 extra quant tiers per model means sourcing + verifying 14+ extra GGUFs and SHAs for marginal RAM-headroom gains. Q4_K_M already fits every device in our `minRamGb` matrix. Revisit when there's a user request.
+
+**Dropped from original spec**:
+- Self-hosting GGUFs on GitHub Releases — 2GB/asset cap kills E2B Q4_K_M (3.2GB), Qwen 4B (2.8GB), Llama 3B (2.2GB), E4B (5GB); also: prior failures observed.
+- Cloudflare R2 / Backblaze B2 — adds infra ownership for no upside; HF anonymous bandwidth is unmetered in practice (3000 resolvers/IP/5min limit applies, but each model download is one resolver hit).
+- `convert_hf_to_gguf` toolchain verification — out of scope; we consume GGUFs, we don't author them.
+- Documenting `--chat-template` / `-nkvo` flag requirements — these are llama.cpp CLI concerns, not exposed by our JS API; we already use `jinja: true` so chat templates are read from the GGUF.
+
+**Research findings (2026-04-16)**:
+- llama.rn release picture: `0.12.0-rc.8` (2026-04-13, llama.cpp b8771) is the safest current pin. The 0.12 RC series is purely sync-with-llama.cpp + small fixes (rc.2 fixed `TranslateGemma content parts`, rc.7 fixed `slot_manager pending work` for streaming reliability). `0.11.5` predates Gemma 4 entirely.
+- HF anonymous limit: 3000 resolvers per IP per 5-minute window, per [HF docs](https://huggingface.co/docs/hub/rate-limits). One model download = 1 resolver hit. Forum reports 5TB unauth downloads with no slowdown. Real-world fine for end users.
+- Llama 3.2 family is gated by Meta — those entries need a documented "bring your HF token" error path, not infrastructure.
+- Google Drive ruled out: per-file anonymous quota triggers around 25 GB/day; redirect-link URLs are hostile to programmatic clients.
 
 ### Phase 23: Structured Output API [P1 — NEW]
 Ollama shipped `format: json | JSONSchema`. AI SDK users expect `generateObject()`. We should match.

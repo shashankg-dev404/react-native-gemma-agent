@@ -1702,3 +1702,118 @@ Phase 21 multi-model support is complete (code + tests + ADR). The remaining ite
 1. On-device acceptance: load model, switch to Quick tab, send a few messages, verify streaming works and conversation maintains history.
 2. Phase 21 (Multi-Model Support) or Phase 22 (Prebuilt Model Catalog) per PLAN.md priority.
 
+---
+
+## Session: 2026-04-16 (Phase 21 commit + Phase 22 research only)
+
+### What landed
+
+- Committed Phase 21 (multi-model support) as `bfcea7f`. No new code this session.
+- Rewrote Phase 22 in `docs/PLAN.md` after research and a clarifying back-and-forth on the hosting premise.
+
+### Research
+
+**llama.rn release picture** (via `gh api repos/mybigday/llama.rn/releases`):
+
+| Tag | Date | llama.cpp sync | Notable |
+|---|---|---|---|
+| 0.12.0-rc.8 | 2026-04-13 | b8771 | latest; safest Gemma 4 build |
+| 0.12.0-rc.7 | 2026-04-10 | (incremental) | `slot_manager pending work` fix — streaming reliability |
+| 0.12.0-rc.6 | 2026-04-08 | b8672 | iOS dSYMs, native prebuilt assets |
+| 0.12.0-rc.5 | 2026-04-06 | b8672 | promise-task exception handling |
+| 0.12.0-rc.4 | 2026-04-05 | b8665 | sync only |
+| 0.12.0-rc.3 | 2026-04-03 | b8641 | sync only |
+| 0.12.0-rc.2 | 2026-03-27 | (incremental) | `TranslateGemma content parts` fix — Gemma-specific |
+| 0.12.0-rc.1 | 2026-03-24 | b8497 | TTS vocoder fix |
+| 0.12.0-rc.0 | 2026-03-23 | b8475 | reasoning budget support |
+| 0.11.5 | 2026-03-22 | (pre-Gemma-4) | latest non-RC; predates Gemma 4 stability |
+
+Decision: pin `>=0.12.0-rc.8 <0.13.0`. The "latest stable" tag (0.11.5) is older than Gemma 4 itself. The PLAN's old reference to disallowed `--chat-template` / `-nkvo` flags is an llama.cpp CLI concern that doesn't apply to our JS surface (we use `jinja: true`).
+
+**Hosting reality check** (HF docs + community forum threads):
+
+- Anonymous HF rate limit: 3000 resolvers/IP/5-minute window. One GGUF download = one resolver hit.
+- Bandwidth itself is unmetered in practice (a forum thread reports 5TB unauth downloads with no slowdown).
+- Llama 3.2 family is gated by Meta — needs HF token. Not our infra problem; needs a clear error path.
+- GitHub Releases: 2GB/asset cap is fatal for Gemma 4 E4B (5GB), E2B Q4_K_M (3.2GB), Qwen 4B (2.8GB), Llama 3B (2.2GB). Also previously failed in practice.
+- Google Drive: per-file anonymous quota around 25 GB/day. Wrong tool for distributing large public files.
+- Cloudflare R2: would work technically, but adds infra ownership for no upside when HF works.
+
+**Premise correction (user push-back)**: SDKs in this space don't host model bytes. Peer behavior:
+
+| SDK | Hosts bytes? |
+|---|---|
+| `react-native-executorch` | No — references HF (Software Mansion org + originals) |
+| `llama.rn` | No — examples point at HF |
+| `@react-native-ai/llama` | No — `owner/repo/filename` resolved to HF |
+| `transformers.js` | No — HF model zoo |
+
+The SDK is the catalog/convention layer. Bytes belong to model authors.
+
+### Decisions
+
+1. **Catalog references, never hosts.** Phase 22 adds `commitSha` (reproducibility) + `sha256` (integrity) to existing entries. URLs become `/resolve/{sha}/{filename}`.
+2. **Pin `llama.rn` to `>=0.12.0-rc.8 <0.13.0`.** Document in ADR-008.
+3. **CLI is dev-cache only.** `npx react-native-gemma-agent pull <id>` writes to `~/.cache/react-native-gemma-agent/models/<id>/<filename>`, prints `adb push` hint. `ModelManager.findModel()` already checks `/data/local/tmp/<filename>` first, so the dev loop becomes one push per model per device, not one download per fresh install.
+4. **No `--bundle` to APK assets.** 3GB APKs get rejected by Play Store. Devs who need that can do it themselves.
+5. **Auto-quant deferred to v0.4.** Sourcing/verifying 14+ extra GGUFs for marginal RAM-headroom gains when Q4_K_M already fits every device class is bad ROI now.
+6. **No Cloudflare R2 / B2 / GH Releases mirroring.** Skipped per user direction. If HF reliability becomes a problem in the wild, revisit then.
+
+### Files modified
+
+- `docs/PLAN.md` — Phase 22 rewritten with revised scope, deferred items, dropped items, and 2026-04-16 research findings
+- `docs/SESSION_LOG.md` — this entry
+
+### Files committed this session
+
+- `bfcea7f feat: Phase 21 — multi-model support` (10 files, +373/-14)
+
+### What to pick up next
+
+1. Run the prompt above. If `npm install` after the llama.rn version bump produces unexpected lockfile churn, stop and report before committing.
+2. After Phase 22 lands, Phase 23 (structured output API with Zod schema) closes v0.3.0.
+
+## Session: 2026-04-16 (Phase 22 — catalog hardening + pinned llama.rn)
+
+### What landed
+
+- Pinned `llama.rn` peer dependency to `>=0.12.0-rc.8 <0.13.0`. Lockfile diff was clean: llama.rn moved rc.4 → rc.8, nothing else changed.
+- Added `commitSha` and `sha256` fields to `ModelRegistryEntry` and to every one of the 7 catalog entries. Both were sourced from the HuggingFace API: `sha` field on `GET /api/models/{repoId}` for the commit, and `lfs.oid` on `GET /api/models/{repoId}/tree/main?recursive=true` for the SHA-256. No large downloads were required — HF's LFS `oid` is the SHA-256 of the content, so we got all seven hashes straight from the tree API.
+- Discovered and fixed three Phase 21 catalog entries that pointed at filenames that don't exist in their repos:
+  - `gemma-4-e2b-it` — switched from `ggml-org/gemma-4-E2B-it-GGUF` (no Q4_K_M) to `unsloth/gemma-4-E2B-it-GGUF`.
+  - `qwen-3.5-0.8b` — dropped the `UD-` prefix; the unsloth repo has `Qwen3.5-0.8B-Q4_K_M.gguf`, not `-UD-Q4_K_M`.
+  - `qwen-3.5-4b` — same, dropped `UD-` prefix to match the actual filename.
+  - Also updated `expectedSize` on affected entries to the byte-exact upstream sizes.
+- Extended `src/types.ts` `ModelConfig` with an optional `commitSha` field. `checksum` already existed.
+- Updated `ModelManager` to build URLs as `/resolve/{commitSha or 'main'}/{filename}` and to verify SHA-256 after download when `config.checksum` is provided. On mismatch the partial file is deleted and a clear error is thrown with both expected and actual hashes; status stays on `error`. Verification uses `RNFS.hash(path, 'sha256')`.
+- Extracted `buildHuggingFaceUrl` and `assertChecksumMatches` as exported pure helpers so they can be unit-tested without mocking RNFS.
+- Added a Node-only CLI at `src/cli/pull.ts` wired to `"bin": { "react-native-gemma-agent": "./lib/cli/pull.js" }`. Uses `node:https` + `node:fs` + `node:crypto` only (no RN imports). Streams download through a `sha256` hasher, verifies, caches at `~/.cache/react-native-gemma-agent/models/<id>/<filename>`, and prints the `adb push <path> /data/local/tmp/<filename>` hint. Handles 301/302 redirects, surfaces 401/403 with an HF-token message, supports `HF_TOKEN` env var.
+- Tests: extended `ModelRegistry.test.ts` with `commitSha`/`sha256` field assertions and a `modelConfigFromEntry` assertion that the new fields are carried forward. Added a new `ModelManager.test.ts` covering `buildHuggingFaceUrl` (pinned and `main` fallback) and `assertChecksumMatches` (match, case-insensitive, mismatch error payload). `npm test` now reports 218/218 in 18 suites (was 211/211 in 17).
+- `npx tsc --noEmit` clean.
+- `npm run build` clean; `lib/cli/pull.js` is emitted with the shebang preserved and runs as expected (`node lib/cli/pull.js` prints the usage block with sizes from the registry).
+
+### Decisions
+
+1. **CLI lives under `src/cli/` rather than a top-level `cli/`**. Kept `tsconfig.build.json` `rootDir: "./src"` untouched; only change was the new `bin` entry in `package.json`. Top-level `cli/` would have required either a second tsconfig or a `rootDir: "./"` change that would reshape every published file path. Not worth the churn.
+2. **Extracted two helpers (`buildHuggingFaceUrl`, `assertChecksumMatches`) in `ModelManager`** rather than mocking RNFS in tests. Verification logic is pure string/hex comparison; easier to test as a pure function than as an RNFS side effect.
+3. **Three repo/filename corrections in the catalog**. Phase 21 shipped with broken filenames on `gemma-4-e2b-it` and both Qwen entries. Caught when the HF tree API returned 0 matches for those paths. Fix is cosmetically invisible to consumers but restores the catalog to a working state. Captured in this log so there's no mystery about why Phase 22 touched `ModelRegistry` beyond just adding two fields.
+
+### Files modified
+
+- `package.json` — llama.rn pin + `bin` entry
+- `package-lock.json` — llama.rn rc.4 → rc.8 (only change)
+- `src/types.ts` — optional `commitSha` on `ModelConfig`
+- `src/ModelRegistry.ts` — new fields, corrected repo/filename mappings, populated commit SHAs + SHA-256s
+- `src/ModelManager.ts` — pinned URLs, SHA-256 verify, extracted helpers
+- `src/__tests__/ModelRegistry.test.ts` — new assertions
+- `src/__tests__/ModelManager.test.ts` — new suite
+- `src/cli/pull.ts` — new
+- `docs/ADR/008-llamarn-version-pinning-and-catalog-hosting.md` — new
+- `docs/PLAN.md` — Phase 22 checkboxes ticked
+- `docs/SESSION_LOG.md` — this entry
+
+### What to pick up next
+
+1. Phase 23 (structured output API). Parity target: Ollama's `format: json | JSONSchema` and AI SDK's `generateObject`. Start with `generateStructured({ schema })` accepting a Zod schema; constrained decoding via llama.rn grammar hooks if exposed in rc.8, else retry-with-validation. Wire the AI SDK `generateObject` path once the underlying primitive works.
+2. On-device test before cutting v0.3.0: `adb push` one of the catalog GGUFs to `/data/local/tmp/`, run the example app, confirm the SHA-256 verification path is actually hit and succeeds against the pinned hash.
+
