@@ -19,6 +19,7 @@ import type {
   InferenceEngineConfig,
   AgentConfig,
 } from './types';
+import { resolveModelConfig } from './ModelRegistry';
 
 export type GemmaAgentContextValue = {
   modelManager: ModelManager;
@@ -33,8 +34,8 @@ export type GemmaAgentContextValue = {
 const GemmaAgentContext = createContext<GemmaAgentContextValue | null>(null);
 
 export type GemmaAgentProviderProps = {
-  /** Model download config (repoId, filename, etc.) */
-  model: ModelConfig;
+  /** Model ID string (e.g. 'qwen-3.5-4b') or a ModelConfig object */
+  model: string | ModelConfig;
   /** Skills to register on mount */
   skills?: SkillManifest[];
   /** Base system prompt for the agent */
@@ -64,7 +65,8 @@ export function GemmaAgentProvider({
   // Create SDK instances once (stable across re-renders)
   const instances = useRef<Omit<GemmaAgentContextValue, 'activeCategories' | 'setActiveCategories'> | null>(null);
   if (!instances.current) {
-    const modelManager = new ModelManager(model);
+    const resolvedModel = resolveModelConfig(model);
+    const modelManager = new ModelManager(resolvedModel);
     const engine = new InferenceEngine(engineConfig);
     const registry = new SkillRegistry();
 
