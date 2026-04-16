@@ -43,6 +43,14 @@ export type { SkillSandboxHandle } from './SkillSandbox';
 export { validateToolCalls, extractToolCallsFromText } from './FunctionCallParser';
 export type { ParsedToolCall } from './FunctionCallParser';
 
+// Structured output
+export { generateStructured, toJsonSchema, isZodSchema } from './StructuredOutput';
+export type {
+  StructuredOutputSchema,
+  GenerateStructuredInput,
+  GenerateStructuredResult,
+} from './StructuredOutput';
+
 // Types
 export type {
   ModelStatus,
@@ -65,4 +73,5 @@ export type {
   AgentEvent,
   AgentConfig,
   ContextUsage,
+  ResponseFormat,
 } from './types';

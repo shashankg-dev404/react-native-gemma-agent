@@ -97,11 +97,12 @@ Make the existing `ModelRegistry` reproducible and tamper-evident, and pin `llam
 ### Phase 23: Structured Output API [P1 — NEW]
 Ollama shipped `format: json | JSONSchema`. AI SDK users expect `generateObject()`. We should match.
 
-- [ ] `generateStructured({ schema })` with Zod/JSON Schema
-- [ ] Constrained decoding via llama.rn grammar / JSON schema hooks (if exposed; fall back to retry-with-validation)
-- [ ] Wire into Vercel adapter's `generateObject` path
+- [x] `generateStructured({ schema })` with Zod/JSON Schema
+- [x] Constrained decoding via llama.rn grammar / JSON schema hooks (if exposed; fall back to retry-with-validation)
+- [x] Wire into Vercel adapter's `generateObject` path
 
 **Exit**: `generateObject({ model, schema: z.object(...), prompt })` works and validates.
+**New ADR**: `009-structured-output.md`
 
 ---
 

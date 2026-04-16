@@ -581,4 +581,75 @@ describe('GemmaLanguageModel', () => {
       ),
     ).toBe(true);
   });
+
+  it('doGenerate with responseFormat=json forwards schema and returns parsed JSON text', async () => {
+    const engine = new MockInferenceEngine();
+    engine.pushResponse({
+      text: '{"title":"hello","count":7}',
+      content: '{"title":"hello","count":7}',
+    });
+    const model = makeModel(engine, [calcSkill]);
+
+    const jsonSchema = {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        count: { type: 'number' },
+      },
+      required: ['title', 'count'],
+    };
+
+    const result = await model.doGenerate({
+      prompt: userPrompt('title is hello, count is 7'),
+      responseFormat: {
+        type: 'json',
+        schema: jsonSchema as never,
+      },
+    });
+
+    expect(result.finishReason).toEqual({ unified: 'stop', raw: 'stop' });
+    const textPart = result.content.find(
+      (c): c is Extract<typeof c, { type: 'text' }> => c.type === 'text',
+    );
+    expect(textPart).toBeDefined();
+    expect(JSON.parse(textPart!.text)).toEqual({ title: 'hello', count: 7 });
+
+    const callOptions = engine.generateCallArgs[0].options;
+    expect(callOptions?.responseFormat).toEqual({
+      type: 'json_schema',
+      schema: jsonSchema,
+      strict: true,
+    });
+    expect(callOptions?.tools).toBeUndefined();
+  });
+
+  it('doGenerate with responseFormat=json warns and ignores tools', async () => {
+    const engine = new MockInferenceEngine();
+    engine.pushResponse({ text: '{"ok":true}', content: '{"ok":true}' });
+    const model = makeModel(engine, [calcSkill]);
+
+    const result = await model.doGenerate({
+      prompt: userPrompt('anything'),
+      responseFormat: {
+        type: 'json',
+        schema: { type: 'object', properties: {} } as never,
+      },
+      tools: [
+        {
+          type: 'function',
+          name: 'external_api',
+          description: 'x',
+          inputSchema: { type: 'object', properties: {} },
+        },
+      ],
+    });
+
+    expect(
+      result.warnings?.some(
+        (w) =>
+          w.type === 'other' &&
+          w.message.toLowerCase().includes('structured output'),
+      ),
+    ).toBe(true);
+  });
 });
