@@ -1,5 +1,5 @@
 // react-native-gemma-agent SDK
-export const SDK_VERSION = '0.2.0';
+export const SDK_VERSION = '0.3.0';
 
 // Core classes
 export { ModelManager } from './ModelManager';
