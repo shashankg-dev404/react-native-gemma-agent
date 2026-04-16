@@ -294,6 +294,8 @@ export class GemmaLanguageModel implements LanguageModelV3 {
         (this.defaults.activeCategories.length > 0
           ? this.defaults.activeCategories
           : undefined),
+      enable_thinking: gemmaOpts.enable_thinking,
+      reasoning_format: gemmaOpts.reasoning_format,
     };
 
     const query = extractLatestUserQuery(options.prompt);

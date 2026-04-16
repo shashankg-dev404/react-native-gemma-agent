@@ -109,6 +109,9 @@ export type GenerateOptions = {
   tools?: ToolDefinition[];
   /** Tool choice strategy */
   toolChoice?: 'auto' | 'none' | string;
+  /** Forward to llama.rn to enable thinking/reasoning output */
+  enable_thinking?: boolean;
+  reasoning_format?: 'none' | 'deepseek' | 'qwen';
 };
 
 export type TokenEvent = {
