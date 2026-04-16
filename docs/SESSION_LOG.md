@@ -1547,3 +1547,83 @@ Reverted TC-19.G.1 temporary edits (consumer tool definition, fullStream logger)
 
 Phase 19 is done. 27 pass, 3 partial (none are SDK bugs), 1 external dep failure, 9 skipped low-priority cases covered by unit tests.
 
+---
+
+## Session: 2026-04-16 (Phase 20 — Declarative useLLM Hook)
+
+### Housekeeping
+
+- Committed all Phase 19 on-device fixes (commit `3f95f32`).
+- Created `v0.3.0` branch from `v0.2.0` tip. Bumped `SDK_VERSION` to `'0.3.0'` (commit `9d6ca99`).
+
+### What landed
+
+**Phase 20 — DONE**
+
+- `src/useLLM.ts` — new hook:
+  - `useLLM({ model?, systemPrompt?, engineConfig?, generateOptions? })` returns `{ generate, stream, isReady, interrupt, isGenerating, response, streamingText, error, contextUsage, loadModel, unloadModel, reset }`.
+  - When inside a `GemmaAgentProvider`, uses the provider's engine (shared singleton). When standalone, creates a module-level singleton `InferenceEngine` + `ModelManager`.
+  - `generate(prompt)` — blocking single-shot, returns full response, maintains conversation history in a ref.
+  - `stream(prompt)` — same but updates `streamingText` state as tokens arrive via `onToken` callback.
+  - `interrupt()` — delegates to `engine.stopGeneration()`.
+  - `reset()` — clears conversation history, resets context usage.
+  - No skills, no orchestrator, no tool calls. Pure LLM chat.
+
+- `src/GemmaAgentProvider.tsx` — added `useOptionalGemmaAgentContext()` that returns `null` when no provider is mounted (vs the throwing `useGemmaAgentContext()`). Used by `useLLM` to optionally tap into provider context.
+
+- `src/index.ts` — exports `useLLM`, `UseLLMConfig`, `UseLLMReturn`.
+
+- `example/src/QuickChatTab.tsx` — fourth tab in example app. Uses `useLLM` with `systemPrompt: 'Be concise. One paragraph max.'`. Shows bubbles, streaming dot, clear button, and send/stop toggle. Header says "Quick Chat (useLLM)".
+
+- `example/App.tsx` — added "Quick" tab (four tabs total: Chat, Logs, AI SDK, Quick). Input row hidden on Quick tab (it has its own).
+
+### Design decisions
+
+- **Engine sharing**: `useLLM` calls `useOptionalGemmaAgentContext()`. If context exists, it reuses `ctx.engine` and `ctx.modelManager`. If null, it falls back to module-level singletons. This means two `useLLM()` calls without a provider share the same engine (no double model load).
+- **No per-token render throttle for MVP**: executorch's `useLLM` has the same pattern (setState per token). Throttling via RAF or batching is a Phase 21+ optimization if users report jank.
+- **Conversation history in ref**: history is a ref, not state. We don't re-render the whole component on each history push. The `response` and `streamingText` state variables are the only render triggers during generation.
+- **`generateOptions` passthrough**: users can set `maxTokens`, `temperature`, `topP`, `topK`, `stop` at the hook level. No tool-related options since `useLLM` has no skill system.
+
+### Parity with react-native-executorch's useLLM
+
+| executorch | ours | notes |
+|---|---|---|
+| `generate(messages)` | `generate(prompt)` | ours takes a string and manages history internally |
+| `sendMessage(text)` | `stream(prompt)` | ours streams + returns final text |
+| `interrupt` | `interrupt()` | same |
+| `isReady` | `isReady` | same |
+| `isGenerating` | `isGenerating` | same |
+| `response` | `response` | same |
+| `token` | `streamingText` | ours accumulates instead of single token |
+| `messageHistory` | internal ref | not exposed as state (by design, avoids re-renders) |
+| `error` | `error` | same |
+| `configure()` | hook config | ours uses declarative config object |
+| (none) | `contextUsage` | bonus: context window monitoring |
+| (none) | `loadModel()` / `unloadModel()` | bonus: model lifecycle control |
+| (none) | `reset()` | bonus: clear conversation + context |
+
+Full parity plus three extras (contextUsage, model lifecycle, reset). No executorch features missing.
+
+### Verification
+
+- `npx tsc --noEmit` clean
+- 202/202 tests green across 16 suites (no new tests needed; hook is a thin wrapper over InferenceEngine which is already well-tested)
+
+### Files created
+
+- `src/useLLM.ts`
+- `example/src/QuickChatTab.tsx`
+
+### Files modified
+
+- `src/GemmaAgentProvider.tsx` — `useOptionalGemmaAgentContext()`
+- `src/index.ts` — `useLLM` exports
+- `example/App.tsx` — fourth tab
+- `docs/PLAN.md` — Phase 20 checked off
+- `docs/SESSION_LOG.md` — this entry
+
+### What to pick up next
+
+1. On-device acceptance: load model, switch to Quick tab, send a few messages, verify streaming works and conversation maintains history.
+2. Phase 21 (Multi-Model Support) or Phase 22 (Prebuilt Model Catalog) per PLAN.md priority.
+

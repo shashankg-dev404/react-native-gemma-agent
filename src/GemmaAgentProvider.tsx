@@ -151,3 +151,7 @@ export function useGemmaAgentContext(): GemmaAgentContextValue {
   }
   return ctx;
 }
+
+export function useOptionalGemmaAgentContext(): GemmaAgentContextValue | null {
+  return useContext(GemmaAgentContext);
+}

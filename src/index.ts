@@ -22,6 +22,8 @@ export { useSkillRegistry } from './useSkillRegistry';
 export type { UseSkillRegistryReturn } from './useSkillRegistry';
 export { useKnowledgeStore } from './useKnowledgeStore';
 export type { UseKnowledgeStoreReturn } from './useKnowledgeStore';
+export { useLLM } from './useLLM';
+export type { UseLLMConfig, UseLLMReturn } from './useLLM';
 
 // Skill execution
 export { SkillSandbox } from './SkillSandbox';

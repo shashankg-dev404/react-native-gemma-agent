@@ -29,6 +29,7 @@ import { readCalendarSkill } from '../skills/readCalendar';
 import { createLocalNotesSkill } from '../skills/localNotes';
 import { KnowledgeStore } from '../src/KnowledgeStore';
 import { AiSdkChatTab } from './src/AiSdkChatTab';
+import { QuickChatTab } from './src/QuickChatTab';
 
 // --- Config ---
 
@@ -105,9 +106,9 @@ function ChatScreen() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadTimeMs, setLoadTimeMs] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'chat' | 'logs' | 'ai-sdk'>(
-    'chat',
-  );
+  const [activeTab, setActiveTab] = useState<
+    'chat' | 'logs' | 'ai-sdk' | 'quick'
+  >('chat');
   const [contextWarningFlash, setContextWarningFlash] = useState(false);
 
   const chatScrollRef = useRef<ScrollView>(null);
@@ -389,12 +390,27 @@ function ChatScreen() {
               AI SDK
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'quick' && styles.tabActive]}
+            onPress={() => setActiveTab('quick')}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'quick' && styles.tabTextActive,
+              ]}
+            >
+              Quick
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Tab Content */}
         <View style={styles.tabContent}>
           {activeTab === 'ai-sdk' ? (
             <AiSdkChatTab />
+          ) : activeTab === 'quick' ? (
+            <QuickChatTab />
           ) : activeTab === 'chat' ? (
             <ScrollView
               ref={chatScrollRef}
@@ -461,7 +477,7 @@ function ChatScreen() {
         )}
 
         {/* Input — hidden on AI SDK tab (it ships its own input) */}
-        {showChat && activeTab !== 'ai-sdk' && (
+        {showChat && activeTab !== 'ai-sdk' && activeTab !== 'quick' && (
           <View style={styles.inputRow}>
             <TextInput
               style={styles.input}
