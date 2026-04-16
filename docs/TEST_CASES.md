@@ -371,6 +371,798 @@
 
 ---
 
+## Phase 19 — Vercel AI SDK adapter
+
+> Target: `example/App.tsx` running on a real Android device with `ai ~5.0.173` + `@ai-sdk/react` installed in `example/` and the Gemma 4 E2B Q4_K_M GGUF either downloaded or pushed to `/data/local/tmp/`.
+>
+> Primary surface: the **AI SDK** tab (third tab in the tab bar, after **Chat** and **Logs**). The SDK-facing adapter is `react-native-gemma-agent/ai`, wired in `example/src/AiSdkChatTab.tsx`.
+>
+> Setup (once per session):
+> 1. `cd example && npm install`
+> 2. `npx react-native run-android`
+> 3. From the **Chat** tab: tap **Load Model** (or **Download** first). Wait for the "Model loaded in Xs" log line on the **Logs** tab.
+> 4. Tap the **AI SDK** tab. You should see the placeholder `useChat() over createGemmaProvider. Try "What is 234 * 567?" or "Search Wikipedia for quantum computing".`
+> 5. Routing chip defaults to `all`. Second chip `bm25` is available.
+>
+> Unless a case says otherwise: start with a fresh conversation (relaunch the app or tap **Clear Chat** on the **Chat** tab before switching), `skillRouting` chip set to `all`, and the device online.
+
+### 19.A — Provider lifecycle (`prepare()`, `unload()`)
+
+### TC-19.A.1: `prepare()` is a no-op when the engine already has a model loaded
+**Precondition**: Model loaded via **Chat** tab (status chip reads `ready`, context bar visible).
+**Steps**:
+1. Switch to **AI SDK** tab.
+2. Type `hello` into the tab's input row and tap **Send**.
+
+**Expected**:
+- First `text-delta` arrives within the same time as the legacy chat tab (no reload pause of ~10 s).
+- **Logs** tab shows no new `Loading model into memory...` line.
+- `engine.isLoaded` remains `true` — input placeholder stays `Ask something...`, not `Load the model first`.
+
+**Result**: [x] Pass / [ ] Fail
+
+### TC-19.A.2: `prepare(modelPath)` loads an explicit GGUF path when engine is unloaded
+**Precondition**: Model file on device at `/data/local/tmp/gemma-4-E2B-it-Q4_K_M.gguf`. From **Chat** tab tap **Unload**.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`, inside `AiSdkChatTab`, replace the `const provider = useMemo(...)` block with the version below):
+```diff
+   const provider = useMemo(
+     () =>
+       createGemmaProvider({
+         engine,
+         registry,
+         knowledgeStore: knowledgeStore ?? null,
+         modelManager,
+         skillExecutor,
+       }),
+     [engine, registry, knowledgeStore, modelManager, skillExecutor],
+   );
++  React.useEffect(() => {
++    const model = provider('gemma-4-e2b');
++    model
++      .prepare('/data/local/tmp/gemma-4-E2B-it-Q4_K_M.gguf')
++      .then(() => console.log('[TC-19.A.2] prepare(explicit path) OK'))
++      .catch((err) => console.log('[TC-19.A.2] prepare failed:', err.message));
++  }, [provider]);
+```
+**Steps**:
+1. Reload the Metro bundle.
+2. Switch to **AI SDK** tab (don't touch **Load Model** on the **Chat** tab).
+3. Watch `adb logcat *:S ReactNativeJS:V` for the tag.
+
+**Expected**:
+- Log line `[TC-19.A.2] prepare(explicit path) OK` appears within 15 s of opening the tab.
+- Input placeholder flips from `Load the model first` to `Ask something...`.
+- Sending `hello` produces a text bubble.
+
+**Cleanup**: Revert the `useEffect` block.
+
+**Result**: [~] Partial pass
+- `[TC-19.A.2] prepare(explicit path) OK` log appeared on schedule, confirming `prepare(modelPath)` loads the GGUF via `engine.loadModel` end-to-end.
+- Placeholder did NOT flip from `Load the model first` to `Ask something...` automatically. `AiSdkChatTab` reads `engine.isLoaded` as a plain getter; the component isn't subscribed to a React-state signal, so nothing schedules a re-render when `prepare()` resolves. Adding a local `forceRerender()` call in the useEffect's `.then` made the placeholder flip and unblocked sending. Harness gap, not an SDK/ADR-006 contract violation — `prepare()` doesn't promise React reactivity. Track as follow-up: either expose `isModelLoaded` through `useGemmaAgentContext`, or have `AiSdkChatTab` subscribe to a load signal.
+
+### TC-19.A.3: `prepare()` auto-loads via configured `ModelManager`
+**Precondition**: Model file on device; from **Chat** tab tap **Unload**.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`): same injection site as TC-19.A.2 but call `model.prepare()` with no arguments:
+```diff
++  React.useEffect(() => {
++    const model = provider('gemma-4-e2b');
++    model
++      .prepare()
++      .then(() => console.log('[TC-19.A.3] prepare() auto-load OK'))
++      .catch((err) => console.log('[TC-19.A.3] prepare failed:', err.message));
++  }, [provider]);
+```
+**Steps**:
+1. Reload Metro.
+2. Switch to **AI SDK** tab.
+
+**Expected**:
+- Log line `[TC-19.A.3] prepare() auto-load OK` appears.
+- `ModelManager.findModel()` picks up the on-device GGUF (same path the **Chat** tab's **Load Model** button uses).
+- Sending `hello` produces a text bubble.
+
+**Cleanup**: Revert the `useEffect` block.
+
+**Result**: [~] Partial pass
+- `[TC-19.A.3] prepare() auto-load OK` logged, confirming ModelManager.findModel() located the on-device GGUF and engine.loadModel succeeded.
+- Sending `hello` produced a response bubble.
+- Same harness gap as TC-19.A.2: placeholder flip required a local forceRerender() nudge.
+
+### TC-19.A.4: `prepare()` throws a clear error when nothing is configured
+**Precondition**: Model **not** on device (fresh install or file deleted). From **Chat** tab tap **Unload** if applicable.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`): strip `modelManager` from the provider factory and call `prepare()` with no argument:
+```diff
+   const provider = useMemo(
+     () =>
+       createGemmaProvider({
+         engine,
+         registry,
+         knowledgeStore: knowledgeStore ?? null,
+-        modelManager,
+         skillExecutor,
+       }),
+-    [engine, registry, knowledgeStore, modelManager, skillExecutor],
++    [engine, registry, knowledgeStore, skillExecutor],
+   );
++  React.useEffect(() => {
++    provider('gemma-4-e2b')
++      .prepare()
++      .catch((err) => console.log('[TC-19.A.4]', err.message));
++  }, [provider]);
+```
+**Steps**:
+1. Reload Metro.
+2. Switch to **AI SDK** tab.
+
+**Expected**:
+- Log line reads exactly: `[TC-19.A.4] GemmaLanguageModel.prepare: no model loaded. Pass a path to prepare(modelPath), configure the provider with { modelManager }, or call engine.loadModel(path) yourself.`
+- No crash; input row stays in the disabled state.
+
+**Cleanup**: Revert the provider factory and `useEffect`.
+
+**Result**: [x] Pass — exact error message logged, no crash, input stayed disabled.
+
+### 19.B — Stream-part sequencing (single AI SDK tab turn)
+
+### TC-19.B.1: `stream-start` emitted first with empty warnings on a plain turn
+**Precondition**: Model loaded, **AI SDK** tab open, no tools passed (default).
+**In-code edit** (`example/src/AiSdkChatTab.tsx`, inside `makeGemmaTransport.sendMessages`, add a `for await` logger):
+```diff
+-      return result.toUIMessageStream({ originalMessages: messages });
++      const consumed: any[] = [];
++      for await (const chunk of result.fullStream) {
++        console.log('[TC-19.B]', chunk.type, JSON.stringify(chunk).slice(0, 200));
++        consumed.push(chunk);
++      }
++      return result.toUIMessageStream({ originalMessages: messages });
+```
+(Leave this edit in place for TC-19.B.2–B.11. Revert after the block.)
+**Steps**:
+1. Reload Metro.
+2. In the **AI SDK** tab type `hello` and tap **Send**.
+3. In `adb logcat *:S ReactNativeJS:V` observe tagged `[TC-19.B]` lines.
+
+**Expected**:
+- First tagged line has `type: 'stream-start'`.
+- Its `warnings` array is `[]` (present in the JSON but empty).
+- No `[TC-19.B]` line appears before `stream-start`.
+
+**Result**: [x] Pass
+- ai@6 `fullStream` renames V3 `stream-start` to `start` and adds `start-step`. `warnings: []` present on `start-step`. Sequence correct, `start` is first.
+
+### TC-19.B.2: `text-start` precedes the first `text-delta`
+**Precondition**: TC-19.B.1 edit in place.
+**Steps**:
+1. Type `count from one to five` and tap **Send**.
+
+**Expected**:
+- Log stream contains exactly one `type: 'text-start'` line before any `type: 'text-delta'` line.
+
+**Result**: [x] Pass
+
+### TC-19.B.3: `text-delta` parts arrive as individual tokens (buffered flush)
+**Precondition**: TC-19.B.1 edit in place.
+**Steps**:
+1. Type `write a two sentence poem about rivers` and tap **Send**.
+2. Watch the tab's bubble and the logcat lines.
+
+**Expected**:
+- Multiple `type: 'text-delta'` log lines with incremental `delta` values (one token each).
+- All deltas arrive in a burst after generation completes (buffered to prevent tool-call token leaks), not progressively during generation.
+- The Gemma bubble appears once generation finishes, not character-by-character.
+
+**Result**: [x] Pass
+- 20 text-delta parts, each one token, all within an ~18ms burst after generate() resolved. text-start before first delta, text-end after last. Buffered flush working as designed.
+
+### TC-19.B.4: `text-end` fires before `finish`
+**Precondition**: TC-19.B.1 edit in place.
+**Steps**:
+1. Type `hi` and tap **Send**; wait for the bubble to stop growing.
+
+**Expected**:
+- Log sequence ends with `... text-end ... finish`.
+- No `text-delta` appears after `text-end`.
+
+**Result**: [x] Pass
+- text-end at 12:35:29.286, finish-step at 12:35:29.288. No text-delta after text-end.
+
+### TC-19.B.5: `reasoning-start / -delta / -end` emitted when `enable_thinking` is on
+**Precondition**: TC-19.B.1 edit in place.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`, inside `makeGemmaTransport.sendMessages`, extend `providerOptions.gemma`):
+```diff
+-        providerOptions: { gemma: { skillRouting: routing } },
++        providerOptions: {
++          gemma: { skillRouting: routing, enable_thinking: true, reasoning_format: 'deepseek' },
++        },
+```
+**Steps**:
+1. Reload Metro.
+2. Type `what is the 7th prime number, explain your reasoning` and tap **Send**.
+
+**Expected**:
+- If llama.rn populates `result.reasoning_content` for Gemma 4 with `enable_thinking: true`: log shows `reasoning-start`, one `reasoning-delta` with the full chain-of-thought, and `reasoning-end` before `text-start`/`finish`.
+- The visible bubble renders only the final answer text (no thinking tokens leaked as text).
+- If llama.rn does NOT populate `result.reasoning_content` (all thinking tokens arrive as regular text): no reasoning parts in the log, but text should still be clean (thinking stripped by `result.content`).
+
+**Cleanup**: Revert `providerOptions` edit.
+
+**Result**: [~] Partial — adapter correct, model limitation
+- No `reasoning-start/delta/end` in logs. `result.reasoning` was null — Gemma 4 E2B doesn't use DeepSeek's `<think>` format; `reasoning_format: 'deepseek'` had no effect. Model answered with inline reasoning in visible text instead.
+- No thinking token markers leaked (no `<|channel>thought` in UI). Text is clean.
+- Adapter code for reasoning emission is verified by unit tests (GemmaLanguageModel.test.ts). Cannot exercise on-device until llama.rn adds a Gemma-native reasoning parser or Gemma adopts a supported format.
+
+### TC-19.B.6: `tool-input-start` appears as soon as the model begins emitting a tool call
+**Precondition**: TC-19.B.1 edit in place.
+**Steps**:
+1. Type `what is 234 * 567?` and tap **Send**.
+
+**Expected**:
+- A gold-bordered tool card appears in the bubble with `tool: calculator` before the numeric answer is shown.
+- Logs: a `type: 'tool-input-start'` line with `toolName: 'calculator'` and `providerExecuted: true`.
+- No `text-delta` parts containing tool-call syntax (buffered flush suppresses them).
+- No `tool-error` parts (skills registered as tools in streamText).
+
+**Result**: [x] Pass
+- tool-input-start with toolName:calculator, providerExecuted:true. No leaked text-delta, no tool-error. Tool card shows "tool: tool-calculator, state: output-available, 132678". Collision warnings in start-step are cosmetic (dual registration).
+
+### TC-19.B.7: `tool-input-delta` parts stream progressive tool-arg decode
+**Precondition**: TC-19.B.1 edit in place. This specific stream-part is not rendered by the AI SDK tab UI today.
+**Steps**:
+1. Type `calculate 12345 * 6789` and tap **Send**.
+
+**Expected**:
+- Logs contain one or more `type: 'tool-input-delta'` lines between the `tool-input-start` and the matching `tool-input-end` (this is the day-one fix covered in §19.F but verified here at the sequence level).
+- [BLOCKED — needs UI] The AI SDK tab does not render progressive input; the log lines are the only visible artifact. Flag fail only if the log lines are missing.
+
+**Result**: [x] Pass
+- Log from B.6 calculator test: `tool-input-delta` with `{"expression":"234 * 567"}` present between start and end.
+
+### TC-19.B.8: `tool-input-end` closes the tool-input bracket before `tool-call`
+**Precondition**: TC-19.B.1 edit in place.
+**Steps**:
+1. Type `what is 5 + 7?` and tap **Send**.
+
+**Expected**:
+- Log order: `tool-input-start → (zero or more) tool-input-delta → tool-input-end → tool-call → tool-result → finish`.
+- No `tool-call` log line appears before the matching `tool-input-end`.
+
+**Result**: [x] Pass
+- B.6 calculator log confirms: tool-input-end at :31.169 then tool-call at :31.169 then tool-result at :31.169.
+
+### TC-19.B.9: `tool-call` and `tool-result` pair correctly for a provider-executed skill
+**Precondition**: TC-19.B.1 edit in place.
+**Steps**:
+1. Type `what is 234 * 567?` and tap **Send**.
+
+**Expected**:
+- Tool card in the bubble shows `tool: calculator`, `state: output-available`, output `132678`.
+- Logs: the `tool-call` and the matching `tool-result` both carry `providerExecuted: true` and the same `toolCallId`.
+
+**Result**: [x] Pass
+- tool-call: toolCallId "call_0", providerExecuted:true. tool-result: same toolCallId, output "132678", providerExecuted:true. UI tool card matches.
+
+### TC-19.B.10: `finish` is the terminal part and nothing follows it
+**Precondition**: TC-19.B.1 edit in place.
+**Steps**:
+1. Type `what is 2 + 2?` and tap **Send**; wait until the **Stop** button disappears.
+
+**Expected**:
+- Last `[TC-19.B]` log line for the turn has `type: 'finish'`.
+- No further log lines with the same tag until the next user message.
+
+**Result**: [x] Pass
+- B.6 calculator log: last line is `finish` with finishReason "stop". No subsequent [TC-19.B] lines.
+
+### TC-19.B.11: `error` part fires terminally when the engine throws mid-stream
+**Precondition**: TC-19.B.1 edit in place. From **Chat** tab tap **Unload** to force an engine failure.
+**Steps**:
+1. Switch to the **AI SDK** tab.
+2. In-code edit: temporarily disable the `!engine.isLoaded` guard in `handleSend` so the input accepts the message anyway:
+```diff
+-    if (!text || isStreaming || !engine.isLoaded) return;
++    if (!text || isStreaming) return;
+```
+3. Reload Metro.
+4. Type `hello` and tap **Send**.
+
+**Expected**:
+- Red error bubble appears under the placeholder with a message like `Model not loaded` or similar.
+- Logs: last `[TC-19.B]` line has `type: 'error'`; no more lines for the turn.
+- App does not crash.
+
+**Cleanup**: Revert the guard change and the `fullStream` logger.
+
+**Result**: [x] Pass — red error bubble appeared, last `[TC-19.B]` log was `type: 'error'`, no crash, no further lines after error.
+
+### 19.C — Provider-executed skills
+
+### TC-19.C.1: `calculator` skill round-trip
+**Precondition**: Model loaded, **AI SDK** tab open, chip set to `all`.
+**Steps**:
+1. Type `what is 234 * 567?` and tap **Send**.
+
+**Expected**:
+- Tool card: `tool: calculator`, `state: output-available`, output contains `132678`.
+- Final text bubble contains `132678` in a natural-language sentence.
+
+**Result**: [x] Pass
+
+### TC-19.C.2: `query_wikipedia` skill round-trip
+**Precondition**: Online.
+**Steps**:
+1. Type `search Wikipedia for the Eiffel Tower` and tap **Send**.
+
+**Expected**:
+- Tool card: `tool: query_wikipedia`, output contains `Eiffel` and `Paris`.
+- Final text bubble is a natural-language summary mentioning the tower's location in Paris.
+
+**Result**: [x] Pass — tool card `tool-query_wikipedia`, `output-available`, Eiffel Tower content with Paris/France. Correct.
+
+### TC-19.C.3: `web_search` skill round-trip
+**Precondition**: Online.
+**Steps**:
+1. Type `search the web for the latest React Native release notes` and tap **Send**.
+
+**Expected**:
+- Tool card: `tool: web_search`, output includes at least one title + URL from a SearXNG instance.
+- Final text bubble references a recent RN version.
+
+**Result**: [x] Fail (external dep) — SearXNG instances all down/blocked. Tool card shows `output-error`. Model handled gracefully ("I was unable to find..."). Error handling correct, but no search results returned. Not an SDK bug.
+
+### TC-19.C.4: `device_location` skill round-trip
+**Precondition**: GPS enabled; location permission granted to the example app.
+**Steps**:
+1. Type `where am I right now?` and tap **Send**.
+
+**Expected**:
+- Tool card: `tool: device_location`, output includes `latitude`, `longitude`, and a city name.
+- Final text bubble names the city.
+
+**Result**: [x] Pass
+
+### TC-19.C.5: `read_calendar` skill round-trip
+**Precondition**: Calendar permission granted; at least one event on today's device calendar.
+**Steps**:
+1. Type `what's on my calendar today?` and tap **Send**.
+
+**Expected**:
+- Tool card: `tool: read_calendar`, output lists events with time ranges and titles.
+- Final text bubble repeats the events in natural language.
+
+**Result**: [x] Pass
+
+### TC-19.C.6: `local_notes` skill round-trip (save + read)
+**Precondition**: Fresh conversation.
+**Steps**:
+1. Type `save a note titled favorite color with content blue` and tap **Send**.
+2. Wait for completion.
+3. Type `read my note titled favorite color` and tap **Send**.
+
+**Expected**:
+- Turn 1: tool card `tool: local_notes`, output confirms save.
+- Turn 2: tool card `tool: local_notes`, output contains `blue`; final text bubble says blue.
+
+**Result**: [x] Pass
+
+### 19.D — Chained skills + `maxChainDepth`
+
+### TC-19.D.1: Wikipedia → local_notes chain
+**Precondition**: Online, fresh conversation.
+**Steps**:
+1. Type `search Wikipedia for quantum computing then save the first sentence as a note titled qc-intro` and tap **Send**.
+
+**Expected**:
+- Two tool cards in order: `tool: query_wikipedia` (output contains `quantum`), then `tool: local_notes` (action `save`, title `qc-intro`).
+- Final text bubble confirms both steps.
+
+**Result**: [x] Pass — after fixing duplicate toolCallId bug (llama.rn resets ID counter per generate()). Two tool cards: `tool-query_wikipedia` with quantum computing content, then `tool-local_notes` with "Note qc-intro saved successfully."
+
+### TC-19.D.2: Calculator → Wikipedia chain
+**Precondition**: Online, fresh conversation.
+**Steps**:
+1. Type `compute 1969 + 20, then search Wikipedia for the year that number gives` and tap **Send**.
+
+**Expected**:
+- Tool cards in order: `tool: calculator` (output `1989`), then `tool: query_wikipedia` (query around `1989`).
+- Final text bubble ties the two together.
+
+**Result**: [x] Pass
+
+### TC-19.D.3: Default `maxChainDepth: 5` terminates a runaway chain with fallback
+**Precondition**: Fresh conversation.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`, temporarily lower routing so every skill is offered every turn and encourage looping — inject a user prompt that keeps asking for more searches). No code edit needed; use the prompt below.
+**Steps**:
+1. Type `search Wikipedia for topic 1, then for topic 2, then for topic 3, then for topic 4, then for topic 5, then for topic 6, and summarize` and tap **Send**.
+
+**Expected**:
+- At most 5 provider-executed tool cards appear.
+- Final text bubble contains the string `maximum chain depth` (substring of `I tried to use tools but reached the maximum chain depth. Here is what I know so far.`).
+
+**Result**: [x] Pass
+
+### TC-19.D.4: `providerOptions.gemma.maxChainDepth: 2` overrides default
+**Precondition**: Fresh conversation.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`, inside `makeGemmaTransport`):
+```diff
+-      providerOptions: { gemma: { skillRouting: routing } },
++      providerOptions: { gemma: { skillRouting: routing, maxChainDepth: 2 } },
+```
+**Steps**:
+1. Reload Metro.
+2. Type the same prompt as TC-19.D.3 and tap **Send**.
+
+**Expected**:
+- At most 2 provider-executed tool cards appear.
+- Final text bubble contains `maximum chain depth`.
+
+**Cleanup**: Revert.
+
+**Result**: [x] Pass
+
+### 19.E — `providerOptions.gemma` overrides
+
+### TC-19.E.1: `skillRouting: 'bm25'` narrows the tool list
+**Precondition**: Fresh conversation. Chip set to `bm25` (tap the `bm25` chip in the routing bar; it highlights blue).
+**In-code edit**: none (UI covers this).
+**Steps**:
+1. Type `what is 12 * 19?` and tap **Send**.
+2. In `adb logcat`, look for the turn's tool list (add a one-liner log in `runToolLoop.ts` if not already present, or use the `[TC-19.B]` stream logger from 19.B.1 to count distinct `toolName` values emitted in `tool-input-start`).
+
+**Expected**:
+- Only the `calculator` tool is exercised this turn; no other tool card appears.
+- Tool card output: `228`.
+
+**Result**: [x] Pass
+
+### TC-19.E.2: `maxToolsPerInvocation` caps the tool list
+**Precondition**: Fresh conversation.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`):
+```diff
+-      providerOptions: { gemma: { skillRouting: routing } },
++      providerOptions: { gemma: { skillRouting: 'bm25', maxToolsPerInvocation: 2 } },
+```
+Also add a transient log at the top of `src/runToolLoop.ts:getToolsForQuery` so the tool count is visible:
+```diff
+ function getToolsForQuery(
+   registry: SkillRegistry,
+   config: RunToolLoopConfig,
+   query: string,
+ ): ToolDefinition[] {
++  console.log('[TC-19.E.2] routing=', config.skillRouting, 'cap=', config.maxToolsPerInvocation);
+```
+**Steps**:
+1. Reload Metro.
+2. Type `search Wikipedia for Alan Turing` and tap **Send**.
+3. Observe the returned tool list length via a second log line added at the return path (or inspect the `[TC-19.B]` stream: at most 2 distinct `toolName`s should surface across the turn).
+
+**Expected**:
+- Log prints `routing= bm25 cap= 2`.
+- No more than 2 tool cards invoked across this single turn's tool loop iteration.
+
+**Cleanup**: Revert both edits.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-19.E.3: `activeCategories` filters skills by category
+**Precondition**: Fresh conversation.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`):
+```diff
+-      providerOptions: { gemma: { skillRouting: routing } },
++      providerOptions: { gemma: { skillRouting: 'all', activeCategories: ['utility'] } },
+```
+**Steps**:
+1. Reload Metro.
+2. Type `look up the capital of Japan on Wikipedia` and tap **Send**.
+
+**Expected**:
+- Model cannot call `query_wikipedia` (category `research` is excluded). Either no tool card appears, or only `calculator` / `read_calendar` / `local_notes` / `device_location` appear.
+- Final text bubble answers from the model's own knowledge (or apologizes) — no Wikipedia card.
+
+**Cleanup**: Revert.
+
+**Result**: [x] Pass
+
+### TC-19.E.4: `maxChainDepth` override
+Covered by TC-19.D.4.
+
+**Result**: [ ] Pass / [ ] Fail (same as TC-19.D.4)
+
+### 19.F — Day-one fixes vs upstream providers
+
+### TC-19.F.1: `tool-input-*` parts stream live (not a single post-call dump)
+**Precondition**: TC-19.B.1 `fullStream` logger in place.
+**Steps**:
+1. Type `calculate 1234567 * 7654321` and tap **Send**.
+2. Watch `adb logcat *:S ReactNativeJS:V`.
+
+**Expected**:
+- Between `tool-input-start` and `tool-input-end` there is at least one `tool-input-delta` line whose log timestamp is **strictly before** the `tool-result` line.
+- Fail if the whole tool-input block is flushed in a single log frame simultaneous with the result.
+
+**Cleanup**: revert logger after 19.F batch.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-19.F.2: Tool `inputSchema` reaches the model as `parameters`
+**Precondition**: TC-19.B.1 logger still in place.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`, inject a consumer tool with a rich schema via `streamText`):
+```diff
+ import { streamText, type ChatTransport, type UIMessage } from 'ai';
++import { z } from 'zod';
+ import { useChat } from '@ai-sdk/react';
+...
+-      const result = streamText({
++      const result = streamText({
+         model,
+         messages: messages as Parameters<typeof streamText>[0]['messages'],
+         abortSignal,
+         providerOptions: { gemma: { skillRouting: routing } },
++        tools: {
++          external_api: {
++            description: 'Call an external API with a city name and a unit system.',
++            inputSchema: z.object({
++              city: z.string().describe('city name'),
++              unit: z.enum(['metric', 'imperial']).describe('unit system'),
++            }),
++            execute: async ({ city, unit }) => ({ temp: 22, city, unit }),
++          },
++        },
+       });
+```
+(Requires `example/package.json` to already have `zod`. If not, `cd example && npm i zod`.)
+**Steps**:
+1. Reload Metro.
+2. Type `use external_api to look up weather in Tokyo in metric units` and tap **Send**.
+
+**Expected**:
+- Log line for `tool-input-start` (or `tool-call`) carries `parameters` with **both** `city: 'Tokyo'` and `unit: 'metric'` — proving the schema reached the model and the model produced correctly-keyed args.
+- No `undefined` or missing keys.
+
+**Cleanup**: Revert.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-19.F.3: `abortSignal` actually halts generation mid-stream
+**Precondition**: Fresh conversation.
+**In-code edit** (transient log inside `src/InferenceEngine.ts` — add one line to `stopGeneration`):
+```diff
+   async stopGeneration(): Promise<void> {
++    console.log('[TC-19.F.3] stopGeneration called');
+```
+**Steps**:
+1. Reload Metro.
+2. Type `write me a 500 word essay about ocean currents` and tap **Send**.
+3. After the first few tokens stream in, tap **Stop** in the AI SDK tab routing bar.
+
+**Expected**:
+- Tokens stop arriving within ~1 s of tapping **Stop**.
+- Log `[TC-19.F.3] stopGeneration called` appears.
+- Send button returns from the spinner to the text `Send`.
+- No further `text-delta` logs after the tap.
+
+**Cleanup**: Remove the log line.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### 19.G — Coexistence + collisions
+
+### TC-19.G.1: Consumer-executed tool round-trip coexists with skills
+**Precondition**: Fresh conversation. TC-19.F.2 `external_api` consumer-tool edit in place, plus the `[TC-19.B]` logger.
+**Steps**:
+1. Type `use external_api for London with metric units, then calculate 10 + 5` and tap **Send**.
+
+**Expected**:
+- Two tool cards: `tool: external_api` (consumer-executed — `state: output-available` with the object returned by the consumer `execute`), then `tool: calculator` (provider-executed — `providerExecuted: true` in logs).
+- The `external_api` `tool-call` log line does **not** carry `providerExecuted: true`, and there is no matching `tool-result` log emitted by the adapter for that call (the consumer's `execute` produced it).
+- Final text bubble references both pieces of info.
+
+**Cleanup**: Revert.
+
+**Result**: [x] Fail — BUG: consumer tool works individually (correct params, providerExecuted:false, execute runs, result returned), but chained consumer+skill in one turn fails. runToolLoop terminates on consumer tool with finishReason:'tool-calls'; streamText maxSteps:5 should re-invoke doStream for step 2 but doesn't. Only one start-step/finish-step in logs, no step 2. Needs investigation: either transport-pattern limitation in AI SDK or our provider's stream closing prevents multi-step re-invocation.
+
+### TC-19.G.2: Name collision — consumer tool named `calculator` is dropped with a warning
+**Precondition**: Fresh conversation.
+**In-code edit** (`example/src/AiSdkChatTab.tsx` — register a consumer tool whose name collides with the built-in `calculator` skill):
+```diff
++        tools: {
++          calculator: {
++            description: 'consumer override (should lose)',
++            inputSchema: z.object({ expr: z.string() }),
++            execute: async ({ expr }) => ({ bogus: true, expr }),
++          },
++        },
+```
+Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array is visible.
+**Steps**:
+1. Reload Metro.
+2. Type `what is 5 + 5?` and tap **Send**.
+
+**Expected**:
+- First `[TC-19.B]` log line is `type: 'stream-start'` with `warnings` containing a string mentioning `calculator` and "dropped" / "collision" (phrasing from `toolShapeBridge.separateProviderAndConsumerTools`).
+- Tool card output is `10` (provider-executed skill wins). Not the consumer's `{ bogus: true }` shape.
+
+**Cleanup**: Revert.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-19.G.3: Consumer-tool-only turn terminates after `tool-call` with no `tool-result`
+**Precondition**: Fresh conversation. TC-19.F.2 `external_api` edit in place, **AI SDK** tab's `activeCategories` set to `[]` so no skills are offered:
+```diff
+-      providerOptions: { gemma: { skillRouting: routing } },
++      providerOptions: { gemma: { skillRouting: 'all', activeCategories: ['__none__'] } },
+```
+**Steps**:
+1. Reload Metro.
+2. Type `call external_api for Berlin in metric` and tap **Send**.
+
+**Expected**:
+- Logs: `tool-call` for `external_api` with `providerExecuted: false`, immediately followed by `finish` with `finishReason: 'tool-calls'`. No `tool-result` log emitted by the adapter for that call.
+- The tab's tool card renders the consumer's returned object once the `useChat` round-trip re-invokes `sendMessages` (second pass).
+
+**Cleanup**: Revert.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### 19.H — `providerMetadata.gemma`
+
+### TC-19.H.1: `providerMetadata.gemma` is populated on every `finish`
+**Precondition**: Model loaded.
+**In-code edit** (`example/src/AiSdkChatTab.tsx`, inside `makeGemmaTransport.sendMessages`, iterate `fullStream` and log the finish part):
+```diff
+-      return result.toUIMessageStream({ originalMessages: messages });
++      let lastFinish: any = null;
++      for await (const chunk of result.fullStream) {
++        if (chunk.type === 'finish') lastFinish = chunk;
++      }
++      console.log('[TC-19.H.1] providerMetadata.gemma:', JSON.stringify((lastFinish ?? {}).providerMetadata?.gemma));
++      return result.toUIMessageStream({ originalMessages: messages });
+```
+(Note: iterating `fullStream` consumes the stream. To also render in the UI, use `result.toUIMessageStream({ originalMessages })` before iterating; if the log block alone is enough for verification, you can leave the UI empty for this case.)
+**Steps**:
+1. Reload Metro.
+2. Type `what is 234 * 567?` and tap **Send**.
+
+**Expected**:
+- Log contains a single JSON blob with shape:
+  - `timings.promptMs > 0`
+  - `timings.promptPerSecond > 0`
+  - `timings.predictedMs > 0`
+  - `timings.predictedPerSecond > 0`
+  - `contextUsage.used > 0`
+  - `contextUsage.total > 0`
+  - `contextUsage.percent >= 0 && <= 100`
+- The `percent` value matches (±1) the value shown on the **Chat** tab's context usage bar after the turn.
+
+**Cleanup**: Revert logger.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### 19.I — Coexistence with `useGemmaAgent`
+
+### TC-19.I.1: Model stays loaded across tab switches
+**Precondition**: Model loaded on **Chat** tab.
+**Steps**:
+1. Send `hello` from **Chat** tab; wait for response.
+2. Switch to **AI SDK** tab; send `hello there`.
+3. Switch back to **Chat** tab; send `what's 2 + 2?`.
+
+**Expected**:
+- All three turns produce responses. No `Loading model into memory...` log between them.
+- `isModelLoaded` remains `true` throughout (subtitle reads `ready`).
+
+**Result**: [x] Pass — all three turns responded, no model reload log, status stayed `ready`. AI SDK tab history clears on tab switch (expected: useChat local state unmounts).
+
+### TC-19.I.2: Conversation histories are isolated per tab
+**Precondition**: Fresh app launch; model loaded.
+**Steps**:
+1. On **Chat** tab: send `my name is Shashank`.
+2. Switch to **AI SDK** tab: send `what is my name?`.
+3. Switch back to **Chat** tab: send `what is my name?`.
+
+**Expected**:
+- Step 2: AI SDK tab does NOT know the name (replies with something like "I don't know" — its `useChat` history is independent).
+- Step 3: **Chat** tab answers `Shashank` (orchestrator history preserved).
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-19.I.3: Same skill works from either tab
+**Precondition**: Model loaded.
+**Steps**:
+1. On **Chat** tab: `save a note titled alpha with content one`.
+2. Switch to **AI SDK** tab: `read my note titled alpha`.
+
+**Expected**:
+- The AI SDK tab's `local_notes` tool card returns `one` — the underlying `KnowledgeStore` is shared (same instance passed to both tabs via `GemmaAgentProvider`).
+
+**Result**: [ ] Pass / [ ] Fail
+
+### 19.J — Polyfills + RN runtime smoke
+
+### TC-19.J.1: Cold app start loads polyfills before any AI SDK import
+**Precondition**: Kill the app entirely (swipe away from recents).
+**In-code edit** (`example/polyfills.js`, append assertions at the bottom of the file):
+```diff
++console.log('[TC-19.J.1] ReadableStream:', typeof global.ReadableStream);
++console.log('[TC-19.J.1] TextEncoderStream:', typeof global.TextEncoderStream);
++console.log('[TC-19.J.1] structuredClone:', typeof global.structuredClone);
+```
+**Steps**:
+1. Reload Metro.
+2. Cold-launch the example app.
+3. Observe `adb logcat *:S ReactNativeJS:V` during splash.
+
+**Expected**:
+- Three log lines, each with `function` (or `object` for ReadableStream) — none print `undefined`.
+- Lines appear before any `[TC-19.B]` log from a subsequent message.
+- No red-screen error about `ReadableStream is not defined` or `TextEncoderStream is not a constructor`.
+
+**Cleanup**: Remove the three log lines.
+
+**Result**: [ ] Pass / [ ] Fail
+
+### TC-19.J.2: `useChat` mounts and `streamText` resolves without a red screen
+**Precondition**: Fresh cold start; model loaded on **Chat** tab.
+**Steps**:
+1. Switch to the **AI SDK** tab.
+2. Type `hi` and tap **Send**.
+
+**Expected**:
+- No red screen on tab mount.
+- `useChat()` placeholder renders, then the user's message bubble appears, then Gemma's response streams in.
+- No uncaught promise rejection in logcat referencing `@ai-sdk/react`, `ChatTransport`, `toUIMessageStream`, or the polyfills.
+
+**Result**: [x] Pass — cold launch (kill from recents, reopen), load model, AI SDK tab: no red screen, placeholder rendered, response streamed in.
+
+---
+
+## Phase 19 — Pass/fail tracker
+
+| ID | Case | Pass |
+|---|---|---|
+| 19.A.1 | `prepare()` no-op when loaded | [x] |
+| 19.A.2 | `prepare(path)` explicit load | [~] partial (load OK, UI placeholder needs forceRerender; harness gap) |
+| 19.A.3 | `prepare()` ModelManager auto-load | [~] partial (same harness gap as A.2) |
+| 19.A.4 | `prepare()` error with exact message | [x] |
+| 19.B.1 | `stream-start` first, empty warnings | [x] |
+| 19.B.2 | `text-start` precedes `text-delta` | [x] |
+| 19.B.3 | Buffered `text-delta` flush (one token each) | [x] |
+| 19.B.4 | `text-end` before `finish` | [x] |
+| 19.B.5 | Reasoning part trio (enable_thinking) | [~] partial — adapter correct, Gemma 4 doesn't use DeepSeek `<think>` format; no reasoning_content from llama.rn |
+| 19.B.6 | `tool-input-start` arrives early | [x] token leak + tool-error both fixed |
+| 19.B.7 | `tool-input-delta` lines present | [x] delta with full JSON args between start/end |
+| 19.B.8 | `tool-input-end` before `tool-call` | [x] |
+| 19.B.9 | `tool-call` + `tool-result` pair (providerExecuted) | [x] same toolCallId call_0, both providerExecuted:true |
+| 19.B.10 | `finish` terminal | [x] finish is last log line |
+| 19.B.11 | `error` terminal on engine failure | [x] |
+| 19.C.1 | calculator | [x] |
+| 19.C.2 | query_wikipedia | [x] |
+| 19.C.3 | web_search | [!] fail — SearXNG down, error handling correct, not an SDK bug |
+| 19.C.4 | device_location | [x] |
+| 19.C.5 | read_calendar | [x] |
+| 19.C.6 | local_notes save + read | [x] |
+| 19.D.1 | Wikipedia → notes chain | [x] after toolCallId dedup fix |
+| 19.D.2 | Calculator → Wikipedia chain | [x] |
+| 19.D.3 | Default maxChainDepth 5 terminates with fallback | [x] after fallback text-parts fix |
+| 19.D.4 | maxChainDepth 2 override | [x] |
+| 19.E.1 | `skillRouting: 'bm25'` narrows tools | [x] |
+| 19.E.2 | `maxToolsPerInvocation` caps list | [ ] |
+| 19.E.3 | `activeCategories` filter | [x] |
+| 19.E.4 | `maxChainDepth` override (= 19.D.4) | [ ] |
+| 19.F.1 | Live `tool-input-*` streaming | [ ] |
+| 19.F.2 | `inputSchema` reaches model intact | [ ] |
+| 19.F.3 | `abortSignal` stops generation | [x] |
+| 19.G.1 | Consumer tool round-trip coexists | [x] after two fixes: (1) `stopWhen: stepCountIs(5)` (AI SDK v6 renamed maxSteps), (2) loopId in streamId to prevent cross-step ID collision |
+| 19.G.2 | Name collision — skill wins + warning | [ ] |
+| 19.G.3 | Consumer-only tool terminates turn | [ ] |
+| 19.H.1 | `providerMetadata.gemma` populated | [ ] |
+| 19.I.1 | Model stays loaded across tabs | [x] |
+| 19.I.2 | Histories isolated per tab | [ ] |
+| 19.I.3 | Same skill callable from either tab | [ ] |
+| 19.J.1 | Polyfills loaded before AI SDK | [ ] |
+| 19.J.2 | `useChat` mounts, `streamText` resolves | [x] |
+
+---
+
 ## Regression Tests (Run Before Every Release)
 
 | # | Test | Phase |

@@ -69,9 +69,58 @@ This is a 2-day sprint. Follow these rules strictly:
 - Functional components with hooks (no class components)
 - Named exports (no default exports)
 - File naming: `PascalCase.tsx` for components, `camelCase.ts` for utilities
-- Keep files under 300 lines — split if larger
+- Keep files under 300 lines, split if larger
 - No comments for obvious code. Comments only for "why", never "what"
 - Error messages must be user-facing friendly (developers using the SDK are the "users")
+
+### 7a. Don't Leave AI Fingerprints on the Code
+
+Code should read like a human engineer wrote it. A reviewer skimming the diff should never be able to say "this was AI-generated". Follow these rules strictly:
+
+**Comments**
+- DO NOT write comments explaining obvious code. Bad examples to avoid:
+  - `// increment counter`
+  - `// return the result`
+  - `// loop through the array`
+  - `// check if user is null`
+- Comments belong ONLY on non-obvious "why" (a workaround for a specific bug, a hidden invariant, a subtle constraint). If removing the comment wouldn't confuse a future reader, don't write it.
+- DO NOT add JSDoc blocks to internal helpers. Reserve JSDoc for exported public API surfaces.
+- DO NOT write multi-paragraph docstrings. One short sentence max on public exports.
+- DO NOT leave planning/narration comments like `// Step 1: validate input`, `// Now we process the results`, `// This handles the edge case where...`.
+- DO NOT leave "removed" breadcrumb comments (`// removed old logic`, `// was: foo()`). Just delete the code.
+
+**Style consistency**
+- Match the EXISTING code style in the repo (tabs vs spaces, quote style, semicolons, import order, arrow-fn vs named-fn). When in doubt, open the nearest sibling file and mirror it.
+- DO NOT reformat or reorder imports in files you're not otherwise touching.
+- DO NOT switch between `const`/`let`/arrow/function styles within a file. Pick the one the file already uses.
+
+**Naming consistency**
+- Use the same variable name for the same concept across the repo. If messages are called `messages` in `AgentOrchestrator.ts`, they are `messages` everywhere, not `msgs` or `conversationHistory` or `chatLog`.
+- Constants stay in one place (`DEFAULT_CONFIG`, `SDK_VERSION`, etc.). Don't redefine the same constant in multiple files.
+- Don't invent new names for things that already have names in the types (`SkillManifest`, `ToolCall`, `ContextUsage`, `AgentEvent`). Reuse.
+
+**Writing style (commits, PR descriptions, docs, error messages, any prose a human will read)**
+- AVOID em-dashes (—). Use a comma, colon, period, or parentheses instead.
+- AVOID AI-tell words: `delve`, `leverage`, `moreover`, `furthermore`, `comprehensive`, `seamless`, `robust`, `utilize` (just say "use"), `facilitate`, `in order to` (just say "to"), `it's worth noting that`, `essentially`, `meticulously`, `intricate`, `vibrant`, `tapestry`, `realm`, `landscape`, `navigate the complexities of`.
+- AVOID marketing puffery: "production-ready", "enterprise-grade", "powerful", "cutting-edge", "state-of-the-art", "best-in-class".
+- AVOID listicle formatting in commit bodies. Write short sentences like a human would.
+- AVOID emojis in code, commits, and docs unless the user explicitly asks.
+- Commit messages are lowercase after the type prefix, under 70 chars on the subject line, and describe the change factually. Example good: `feat: extract runToolLoop from AgentOrchestrator`. Example bad: `feat: Comprehensively refactored the orchestrator to seamlessly support — you guessed it — the new V3 adapter! 🚀`
+
+**Code shape**
+- DO NOT over-abstract. Three similar lines of code is better than a premature helper. Don't introduce a `Strategy` / `Factory` / `Builder` when a function will do.
+- DO NOT add defensive code for things that can't happen (null-checking a value you just constructed, try/catch around pure functions that don't throw).
+- DO NOT add `readonly` / `Readonly<T>` / `as const` everywhere for show. Use them when immutability is actually load-bearing.
+- DO NOT ship dead code "in case we need it later". Delete it.
+- DO NOT log every step. Production code is quiet; only log at boundaries or on errors.
+- If you split a function, the split should be motivated by reuse or readability at the call site, not by line count.
+
+**Tests**
+- Test names describe behaviour, not implementation: `rejects empty query` beats `test_validateInput_case_3`.
+- DO NOT add tests that assert the mock was called with the exact mock you just passed in. Test behaviour.
+
+**When in doubt**
+- Open 3 sibling files. Match what they do. If you're still unsure, ask Shashank rather than guessing.
 
 ### 8. Git Workflow
 

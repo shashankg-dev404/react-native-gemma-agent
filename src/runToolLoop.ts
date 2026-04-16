@@ -92,6 +92,8 @@ export type RunToolLoopConfig = {
   skillRouting: 'all' | 'bm25';
   maxToolsPerInvocation: number;
   activeCategories?: string[];
+  enable_thinking?: boolean;
+  reasoning_format?: 'none' | 'deepseek' | 'qwen';
 };
 
 export type RunToolLoopInput = {
@@ -115,12 +117,15 @@ export type RunToolLoopResult = {
   providerMetadata: RunToolLoopProviderMetadata;
 };
 
+let loopCounter = 0;
+
 export async function runToolLoop(
   deps: RunToolLoopDeps,
   config: RunToolLoopConfig,
   input: RunToolLoopInput,
   onPart: (part: RunToolLoopPart) => void,
 ): Promise<RunToolLoopResult> {
+  const loopId = ++loopCounter;
   const skillTools = getToolsForQuery(deps.registry, config, input.query);
   const extraTools = input.extraTools ?? [];
   const extraToolNames = new Set(extraTools.map((t) => t.function.name));
@@ -136,19 +141,19 @@ export async function runToolLoop(
   while (depth < config.maxChainDepth) {
     depth++;
 
+    const tokenBuffer: string[] = [];
+
     const result = await deps.engine.generate(
       conversation,
       {
         tools: tools.length > 0 ? tools : undefined,
         toolChoice: tools.length > 0 ? 'auto' : undefined,
+        enable_thinking: config.enable_thinking,
+        reasoning_format: config.reasoning_format,
       },
       (tokenEvent) => {
         if (tokenEvent.token) {
-          onPart({
-            type: 'text-delta',
-            id: `text-${depth}`,
-            delta: tokenEvent.token,
-          });
+          tokenBuffer.push(tokenEvent.token);
         }
       },
     );
@@ -163,14 +168,44 @@ export async function runToolLoop(
       });
     }
 
+    const hasToolCalls = parsedCalls.length > 0;
+
+    if (!hasToolCalls) {
+      if (result.reasoning) {
+        const rId = `reasoning-${depth}`;
+        onPart({ type: 'reasoning-start', id: rId });
+        onPart({ type: 'reasoning-delta', id: rId, delta: result.reasoning });
+        onPart({ type: 'reasoning-end', id: rId });
+      }
+
+      if (result.reasoning) {
+        // tokenBuffer mixes thinking + text tokens; use result.content instead
+        const cleanText = (result.content || '').trim();
+        if (cleanText) {
+          const textId = `text-${depth}`;
+          onPart({ type: 'text-start', id: textId });
+          onPart({ type: 'text-delta', id: textId, delta: cleanText });
+          onPart({ type: 'text-end', id: textId });
+        }
+      } else if (tokenBuffer.length > 0) {
+        const textId = `text-${depth}`;
+        onPart({ type: 'text-start', id: textId });
+        for (const token of tokenBuffer) {
+          onPart({ type: 'text-delta', id: textId, delta: token });
+        }
+        onPart({ type: 'text-end', id: textId });
+      }
+    }
+
     const consumerCall = parsedCalls.find((c) => c.isConsumerTool);
     if (consumerCall) {
-      const toolCallId =
+      const rawConsumerId =
         consumerCall.id ??
         result.toolCalls.find(
           (tc) => tc.function.name === consumerCall.name,
         )?.id ??
         `call_${consumerCall.name}_${depth}`;
+      const toolCallId = `call_${loopId}_${depth}_${rawConsumerId}`;
 
       const assistantMsg: Message = {
         role: 'assistant',
@@ -201,6 +236,13 @@ export async function runToolLoop(
         contextUsage: deps.engine.getContextUsage(),
       };
       const usage = buildUsage(result);
+
+      if (result.reasoning) {
+        const rId = `reasoning-${depth}`;
+        onPart({ type: 'reasoning-start', id: rId });
+        onPart({ type: 'reasoning-delta', id: rId, delta: result.reasoning });
+        onPart({ type: 'reasoning-end', id: rId });
+      }
 
       onPart({
         type: 'finish',
@@ -273,16 +315,20 @@ export async function runToolLoop(
     conversation.push(assistantMsg);
 
     for (const call of parsedCalls) {
-      // tool_call_id must be a string. Fall back to a deterministic ID when
-      // llama.rn's parser didn't return one.
-      const toolCallId =
+      // llama.rn resets its tool-call ID counter per generate() call, so
+      // chained iterations produce duplicate IDs (e.g. "call_0" twice).
+      // Use the raw ID for conversation messages (llama.rn must match
+      // tool_call_id to assistant.tool_calls[].id), but prefix with depth
+      // for stream parts so the AI SDK sees unique IDs across the chain.
+      const conversationId =
         call.id ??
         result.toolCalls.find((tc) => tc.function.name === call.name)?.id ??
         `call_${call.name}_${depth}`;
+      const streamId = `call_${loopId}_${depth}_${conversationId}`;
 
       onPart({
         type: 'tool-input-start',
-        toolCallId,
+        toolCallId: streamId,
         toolName: call.name,
         parameters: call.parameters,
         providerExecuted: true,
@@ -290,7 +336,7 @@ export async function runToolLoop(
 
       onPart({
         type: 'tool-call',
-        toolCallId,
+        toolCallId: streamId,
         toolName: call.name,
         input: JSON.stringify(call.parameters),
         parameters: call.parameters,
@@ -301,7 +347,7 @@ export async function runToolLoop(
 
       onPart({
         type: 'tool-result',
-        toolCallId,
+        toolCallId: streamId,
         toolName: call.name,
         result: skillResult,
         providerExecuted: true,
@@ -314,7 +360,7 @@ export async function runToolLoop(
       const toolMsg: Message = {
         role: 'tool',
         content: resultContent,
-        tool_call_id: toolCallId,
+        tool_call_id: conversationId,
         name: call.name,
       };
       appended.push(toolMsg);
@@ -326,6 +372,11 @@ export async function runToolLoop(
     'I tried to use tools but reached the maximum chain depth. Here is what I know so far.';
   const fallbackMsg: Message = { role: 'assistant', content: fallback };
   appended.push(fallbackMsg);
+
+  const fallbackTextId = `text-fallback`;
+  onPart({ type: 'text-start', id: fallbackTextId });
+  onPart({ type: 'text-delta', id: fallbackTextId, delta: fallback });
+  onPart({ type: 'text-end', id: fallbackTextId });
 
   const timings: CompletionTimings = lastResult?.timings ?? {
     promptTokens: 0,

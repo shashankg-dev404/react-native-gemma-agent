@@ -8,35 +8,64 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { streamText, type ChatTransport, type UIMessage } from 'ai';
+import {
+  convertToModelMessages,
+  jsonSchema,
+  stepCountIs,
+  streamText,
+  tool as aiTool,
+  type ChatTransport,
+  type UIMessage,
+} from 'ai';
 import { useChat } from '@ai-sdk/react';
 
 import { useGemmaAgentContext } from '../../src/GemmaAgentProvider';
 import { SkillSandbox, type SkillSandboxHandle } from '../../src/SkillSandbox';
-import {
-  createGemmaProvider,
-  type GemmaProvider,
-} from '../../src/ai';
+import { createGemmaProvider, type GemmaProvider } from '../../src/ai';
 import type { SkillExecutor } from '../../src/runToolLoop';
+import type { SkillRegistry } from '../../src/SkillRegistry';
 
 type GemmaTransportOptions = {
   provider: GemmaProvider;
+  registry: SkillRegistry;
   modelId?: string;
   routing?: 'all' | 'bm25';
 };
 
+function buildSkillTools(
+  registry: SkillRegistry,
+): Record<string, ReturnType<typeof aiTool>> {
+  const tools: Record<string, ReturnType<typeof aiTool>> = {};
+  for (const skill of registry.getSkills()) {
+    tools[skill.name] = aiTool({
+      description: skill.description,
+      parameters: jsonSchema({
+        type: 'object' as const,
+        properties: skill.parameters,
+        required: skill.requiredParameters ?? [],
+      }),
+    });
+  }
+  return tools;
+}
+
 function makeGemmaTransport({
   provider,
+  registry,
   modelId = 'gemma-4-e2b',
   routing = 'all',
 }: GemmaTransportOptions): ChatTransport<UIMessage> {
   return {
     async sendMessages({ messages, abortSignal }) {
       const model = provider(modelId);
+      const modelMessages = await convertToModelMessages(messages);
+      const skillTools = buildSkillTools(registry);
       const result = streamText({
         model,
-        messages: messages as Parameters<typeof streamText>[0]['messages'],
+        messages: modelMessages,
         abortSignal,
+        tools: skillTools,
+        stopWhen: stepCountIs(5),
         providerOptions: { gemma: { skillRouting: routing } },
       });
       return result.toUIMessageStream({ originalMessages: messages });
@@ -55,18 +84,15 @@ export function AiSdkChatTab() {
   const [input, setInput] = useState('');
   const scrollRef = useRef<ScrollView>(null);
 
-  const skillExecutor: SkillExecutor = useCallback(
-    (html, params, timeout) => {
-      const handle = sandboxRef.current;
-      if (!handle) {
-        return Promise.resolve({
-          error: 'Skill sandbox not mounted yet',
-        });
-      }
-      return handle.execute(html, params, timeout);
-    },
-    [],
-  );
+  const skillExecutor: SkillExecutor = useCallback((html, params, timeout) => {
+    const handle = sandboxRef.current;
+    if (!handle) {
+      return Promise.resolve({
+        error: 'Skill sandbox not mounted yet',
+      });
+    }
+    return handle.execute(html, params, timeout);
+  }, []);
 
   const provider = useMemo(
     () =>
@@ -79,10 +105,9 @@ export function AiSdkChatTab() {
       }),
     [engine, registry, knowledgeStore, modelManager, skillExecutor],
   );
-
   const transport = useMemo(
-    () => makeGemmaTransport({ provider, routing }),
-    [provider, routing],
+    () => makeGemmaTransport({ provider, registry, routing }),
+    [provider, registry, routing],
   );
 
   const { messages, sendMessage, status, stop, error } = useChat({
@@ -103,7 +128,7 @@ export function AiSdkChatTab() {
     <View style={styles.container}>
       <View style={styles.routingBar}>
         <Text style={styles.routingLabel}>skillRouting:</Text>
-        {(['all', 'bm25'] as const).map((opt) => (
+        {(['all', 'bm25'] as const).map(opt => (
           <TouchableOpacity
             key={opt}
             onPress={() => setRouting(opt)}
@@ -140,12 +165,14 @@ export function AiSdkChatTab() {
             "Search Wikipedia for quantum computing".
           </Text>
         )}
-        {messages.map((m) => (
+        {messages.map(m => (
           <MessagePartsBubble key={m.id} message={m} />
         ))}
         {error && (
           <View style={styles.errorBubble}>
-            <Text style={styles.errorText}>{String(error.message ?? error)}</Text>
+            <Text style={styles.errorText}>
+              {String(error.message ?? error)}
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -164,7 +191,10 @@ export function AiSdkChatTab() {
           onSubmitEditing={handleSend}
         />
         <TouchableOpacity
-          style={[styles.sendBtn, (isStreaming || !engine.isLoaded) && styles.sendBtnDisabled]}
+          style={[
+            styles.sendBtn,
+            (isStreaming || !engine.isLoaded) && styles.sendBtnDisabled,
+          ]}
           onPress={handleSend}
           disabled={isStreaming || !engine.isLoaded}
         >
@@ -262,7 +292,12 @@ const styles = StyleSheet.create({
   stopBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   scroll: { flex: 1 },
   scrollInner: { padding: 12, gap: 8 },
-  placeholder: { color: '#666', fontStyle: 'italic', textAlign: 'center', padding: 24 },
+  placeholder: {
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    padding: 24,
+  },
   bubble: {
     padding: 10,
     borderRadius: 8,
@@ -282,7 +317,12 @@ const styles = StyleSheet.create({
   },
   toolPartLabel: { color: '#FFC107', fontSize: 11, fontWeight: '600' },
   toolPartMeta: { color: '#666', fontSize: 10, marginTop: 2 },
-  toolPartOutput: { color: '#ccc', fontSize: 12, marginTop: 4, fontFamily: 'monospace' },
+  toolPartOutput: {
+    color: '#ccc',
+    fontSize: 12,
+    marginTop: 4,
+    fontFamily: 'monospace',
+  },
   errorBubble: {
     padding: 10,
     borderRadius: 8,
