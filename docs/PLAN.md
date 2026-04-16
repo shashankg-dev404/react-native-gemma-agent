@@ -56,14 +56,15 @@ Competitors shipped this. Parity is table stakes now.
 ### Phase 21: Multi-Model Support [P0]
 Decouple from the Gemma brand in code. Keep package name for SEO.
 
-- [ ] Strip hardcoded Gemma prompt assumptions; defer to llama.rn Jinja templates
-- [ ] `ModelConfig` registry: Gemma 4 (E2B/E4B), **Qwen 3.5**, Llama 3.2, SmolLM 2, Hammer 2.1, **MobileLLM-Pro int4 (Meta)**, **GLM 5.1**
-- [ ] Per-model quirks: tool-call format, context length, min RAM, NPU eligibility
-- [ ] `useModelDownload` accepts any registered model id
-- [ ] Matrix test: each model × each built-in skill
+- [x] Strip hardcoded Gemma prompt assumptions; defer to llama.rn Jinja templates
+- [x] `ModelConfig` registry: Gemma 4 (E2B/E4B), Qwen 3.5 (0.8B/4B), Llama 3.2 (1B/3B), SmolLM 2 1.7B
+- [x] Per-model quirks: tool-call format, context length, min RAM, NPU eligibility
+- [x] `useModelDownload` accepts any registered model id (string or ModelConfig)
+- [ ] Matrix test: each model x each built-in skill (requires on-device testing)
 
-**Exit**: `model: 'qwen-3.5-1.7b'` works identically.
+**Exit**: `model: 'qwen-3.5-4b'` works identically.
 **New ADR**: `007-multi-model-support.md`
+**Dropped**: Hammer 2.1 (doesn't exist), MobileLLM-Pro (no GGUF support), GLM 5.1 (too large for mobile)
 
 ### Phase 22: Prebuilt Model Catalog + Pinned llama.rn [P0]
 Zero-friction model pull. Also fixes a real bug surface: llama.rn needs a post-Gemma-4-fixes commit or users hit `--chat-template` throughput regressions and garbled output on `-nkvo`.

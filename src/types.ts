@@ -9,7 +9,7 @@ export type ModelStatus =
   | 'error';
 
 export type ModelConfig = {
-  /** HuggingFace repo ID (e.g., 'unsloth/gemma-4-E2B-it-GGUF') */
+  /** HuggingFace repo ID (e.g., 'ggml-org/gemma-4-E2B-it-GGUF') */
   repoId: string;
   /** GGUF filename within the repo */
   filename: string;

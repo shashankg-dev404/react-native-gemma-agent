@@ -1614,6 +1614,81 @@ Full parity plus three extras (contextUsage, model lifecycle, reset). No executo
 - `src/useLLM.ts`
 - `example/src/QuickChatTab.tsx`
 
+---
+
+## Session: 2026-04-16 (Phase 21 — Multi-Model Support)
+
+### Research
+
+Ran web searches (Tavily) across all target models from the PLAN.md Phase 21 spec. Findings:
+
+- **Qwen 3.5** (Feb 2026): Confirmed. Sizes 0.8B-397B. GGUF via `unsloth/Qwen3.5-{size}-GGUF`. Native tool calling, thinking mode (`<think>...</think>`), 262K context. 0.8B and 4B are mobile-feasible.
+- **Llama 3.2**: Confirmed. 1B/3B instruct. GGUFs widely available (bartowski, ggml-org). 3B has 67% BFCL V2 tool calling, 1B is too weak (25.7%).
+- **SmolLM 2**: Confirmed. 1.7B. GGUFs available. No native tool calling. Chat-only use.
+- **Hammer 2.1**: Does not exist as a published model. No HuggingFace results. Dropped.
+- **MobileLLM-Pro (Meta)**: Custom architecture (interleaved local-global attention). No GGUF/llama.cpp support confirmed. Dropped.
+- **GLM 5.1 (THUDM)**: Smallest variant is 744B total (40B active). Server-class, not mobile. Dropped.
+
+### What landed
+
+**Phase 21 — DONE (code-side)**
+
+1. `src/ModelRegistry.ts` (new) — static registry with 7 models:
+   - `gemma-4-e2b-it`, `gemma-4-e4b-it` (existing primary models)
+   - `qwen-3.5-0.8b`, `qwen-3.5-4b` (new, with thinking mode)
+   - `llama-3.2-1b` (chat only), `llama-3.2-3b` (tool calling)
+   - `smollm2-1.7b` (chat only)
+   - Each entry: name, repoId, filename, expectedSize, contextSize, minRamGb, toolCalling, reasoningFormat, npuEligible
+   - Helpers: `getModelEntry()`, `listModels()`, `modelConfigFromEntry()`, `resolveModelConfig()`
+
+2. `src/InferenceEngine.ts` — removed hardcoded `['<end_of_turn>', '<eos>']` stop tokens. With `jinja: true`, llama.rn reads stop tokens from the GGUF chat template. One-line change.
+
+3. `src/GemmaAgentProvider.tsx` — `model` prop now accepts `string | ModelConfig`. String IDs resolved via `resolveModelConfig()`.
+
+4. `src/useLLM.ts` — `model` config field now accepts `string | ModelConfig`.
+
+5. `src/index.ts` — exports `BUILT_IN_MODELS`, `getModelEntry`, `listModels`, `modelConfigFromEntry`, `resolveModelConfig`, `ModelRegistryEntry`.
+
+6. `docs/ADR/007-multi-model-support.md` — documents model selection rationale, dropped models with reasons, tool calling strategy.
+
+7. `src/__tests__/ModelRegistry.test.ts` — 9 tests covering listing, lookup, config conversion, resolution, validation, and tool calling flags.
+
+### Design decisions
+
+- **Static config record, not a class**: 7 entries, no runtime validation needed. Matches "no over-engineering" rule.
+- **Dropped 3 models from original plan**: Hammer 2.1 (fictional), MobileLLM-Pro (no GGUF), GLM 5.1 (too large). Replaced with verified models.
+- **Tool calling flag per model**: `toolCalling: boolean` in registry. Models with `false` work for `useLLM` (chat) but won't produce tool calls in agent workflows. Text-based fallback deferred.
+- **`reasoningFormat` per model**: Qwen 3.5 models tagged with `'qwen'` so consumers can enable thinking mode correctly.
+
+### Verification
+
+- `npx tsc --noEmit` clean
+- 211/211 tests green across 17 suites
+
+### Files created
+
+- `src/ModelRegistry.ts`
+- `src/__tests__/ModelRegistry.test.ts`
+- `docs/ADR/007-multi-model-support.md`
+
+### Files modified
+
+- `src/InferenceEngine.ts` (removed hardcoded stop tokens)
+- `src/GemmaAgentProvider.tsx` (model prop: `string | ModelConfig`)
+- `src/useLLM.ts` (model config: `string | ModelConfig`)
+- `src/index.ts` (registry exports)
+- `src/types.ts` (JSDoc update)
+- `docs/PLAN.md` (Phase 21 tasks checked off)
+
+### What's left
+
+- Matrix test: each model x each built-in skill (requires on-device testing with each GGUF)
+- Text-based tool call fallback for models with `toolCalling: false` (deferred, works fine for useLLM)
+
+### Next session prompt
+
+Phase 21 multi-model support is complete (code + tests + ADR). The remaining item is on-device matrix testing which requires downloading each GGUF. Ready to commit Phase 21 and move to Phase 22 (Prebuilt Model Catalog + Pinned llama.rn).
+
 ### Files modified
 
 - `src/GemmaAgentProvider.tsx` — `useOptionalGemmaAgentContext()`

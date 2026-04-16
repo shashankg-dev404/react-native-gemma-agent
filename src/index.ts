@@ -1,6 +1,16 @@
 // react-native-gemma-agent SDK
 export const SDK_VERSION = '0.3.0';
 
+// Model registry
+export {
+  BUILT_IN_MODELS,
+  getModelEntry,
+  listModels,
+  modelConfigFromEntry,
+  resolveModelConfig,
+} from './ModelRegistry';
+export type { ModelRegistryEntry } from './ModelRegistry';
+
 // Core classes
 export { ModelManager } from './ModelManager';
 export { InferenceEngine } from './InferenceEngine';

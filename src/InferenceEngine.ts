@@ -169,7 +169,7 @@ export class InferenceEngine {
         temperature: options?.temperature ?? DEFAULT_GENERATE.temperature,
         top_p: options?.topP ?? DEFAULT_GENERATE.topP,
         top_k: options?.topK ?? DEFAULT_GENERATE.topK,
-        stop: options?.stop ?? ['<end_of_turn>', '<eos>'],
+        stop: options?.stop,
         jinja: true,
         enable_thinking: options?.enable_thinking ?? false,
         reasoning_format: options?.reasoning_format ?? 'none',

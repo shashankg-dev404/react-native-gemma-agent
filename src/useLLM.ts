@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import { useOptionalGemmaAgentContext } from './GemmaAgentProvider';
 import { InferenceEngine } from './InferenceEngine';
 import { ModelManager } from './ModelManager';
+import { resolveModelConfig } from './ModelRegistry';
 import type {
   Message,
   ModelConfig,
@@ -11,7 +12,8 @@ import type {
 } from './types';
 
 export type UseLLMConfig = {
-  model?: ModelConfig;
+  /** Model ID string (e.g. 'qwen-3.5-4b') or a ModelConfig object */
+  model?: string | ModelConfig;
   systemPrompt?: string;
   engineConfig?: InferenceEngineConfig;
   generateOptions?: Pick<GenerateOptions, 'maxTokens' | 'temperature' | 'topP' | 'topK' | 'stop'>;
@@ -42,10 +44,11 @@ function getStandaloneEngine(config?: InferenceEngineConfig): InferenceEngine {
   return sharedEngine;
 }
 
-function getStandaloneModelManager(model?: ModelConfig): ModelManager | null {
+function getStandaloneModelManager(model?: string | ModelConfig): ModelManager | null {
   if (!model) return null;
   if (!sharedModelManager) {
-    sharedModelManager = new ModelManager(model);
+    const resolved = resolveModelConfig(model);
+    sharedModelManager = new ModelManager(resolved);
   }
   return sharedModelManager;
 }
