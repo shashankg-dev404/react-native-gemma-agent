@@ -52,7 +52,7 @@ describe('ModelRegistry', () => {
   });
 
   it('every entry has required fields', () => {
-    for (const [id, entry] of Object.entries(BUILT_IN_MODELS)) {
+    for (const [, entry] of Object.entries(BUILT_IN_MODELS)) {
       expect(entry.name).toBeTruthy();
       expect(entry.repoId).toContain('/');
       expect(entry.filename).toMatch(/\.gguf$/);
@@ -65,6 +65,22 @@ describe('ModelRegistry', () => {
         expect(['deepseek', 'qwen']).toContain(entry.reasoningFormat);
       }
     }
+  });
+
+  it('every entry pins a commitSha and sha256', () => {
+    for (const [id, entry] of Object.entries(BUILT_IN_MODELS)) {
+      expect(entry.commitSha).toMatch(/^[0-9a-f]{40}$/);
+      expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(entry.commitSha).not.toBe(entry.sha256);
+      expect(id).toBeTruthy();
+    }
+  });
+
+  it('modelConfigFromEntry carries commitSha and checksum forward', () => {
+    const entry = getModelEntry('gemma-4-e2b-it')!;
+    const config = modelConfigFromEntry(entry);
+    expect(config.commitSha).toBe(entry.commitSha);
+    expect(config.checksum).toBe(entry.sha256);
   });
 
   it('models without tool calling are flagged correctly', () => {

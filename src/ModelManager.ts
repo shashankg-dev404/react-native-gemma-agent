@@ -7,6 +7,27 @@ const DOWNLOAD_CHUNK_TIMEOUT = 60_000;
 type StatusListener = (status: ModelStatus) => void;
 type ProgressListener = (progress: DownloadProgress) => void;
 
+export function buildHuggingFaceUrl(
+  repoId: string,
+  filename: string,
+  commitSha?: string,
+): string {
+  const ref = commitSha ?? 'main';
+  return `${DEFAULT_HF_BASE}/${repoId}/resolve/${ref}/${filename}`;
+}
+
+export function assertChecksumMatches(
+  actual: string,
+  expected: string,
+  filename: string,
+): void {
+  if (actual.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(
+      `SHA-256 mismatch for ${filename}: expected ${expected}, got ${actual}.`,
+    );
+  }
+}
+
 export class ModelManager {
   private _status: ModelStatus = 'not_downloaded';
   private _modelPath: string | null = null;
@@ -139,7 +160,16 @@ export class ModelManager {
       const response = await result.promise;
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        // Move partial to final destination
+        if (this._config.checksum) {
+          const actual = await RNFS.hash(partialPath, 'sha256');
+          try {
+            assertChecksumMatches(actual, this._config.checksum, this._config.filename);
+          } catch (err) {
+            await RNFS.unlink(partialPath);
+            throw err;
+          }
+        }
+
         if (await RNFS.exists(destPath)) {
           await RNFS.unlink(destPath);
         }
@@ -238,7 +268,6 @@ export class ModelManager {
   }
 
   private buildDownloadUrl(): string {
-    const { repoId, filename } = this._config;
-    return `${DEFAULT_HF_BASE}/${repoId}/resolve/main/${filename}`;
+    return buildHuggingFaceUrl(this._config.repoId, this._config.filename, this._config.commitSha);
   }
 }

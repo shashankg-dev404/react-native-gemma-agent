@@ -15,6 +15,8 @@ export type ModelConfig = {
   filename: string;
   /** Expected file size in bytes (for progress calculation) */
   expectedSize?: number;
+  /** HuggingFace commit SHA to pin the download to. Defaults to 'main'. */
+  commitSha?: string;
   /** SHA256 checksum for verification */
   checksum?: string;
 };
