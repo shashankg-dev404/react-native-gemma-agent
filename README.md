@@ -43,6 +43,7 @@
 - [Architecture](#architecture)
 - [Performance](#performance)
 - [Supported Models](#supported-models)
+  - [Letting your user pick a model](#letting-your-user-pick-a-model)
 - [Future Plans](#future-plans)
 - [License](#license)
 
@@ -594,12 +595,94 @@ Physical devices with GPU offloading (Snapdragon 8 Elite, Dimensity 9300, etc.) 
 
 ## Supported Models
 
-Currently tested with:
+The SDK ships with a prebuilt catalog. Pass the ID as a string to `GemmaAgentProvider`, or use a custom `ModelConfig` to point at your own GGUF.
 
-- **Gemma 4 E2B-it Q4_K_M** (3.09 GB) — recommended
-- **Gemma 4 E2B-it Q3_K_M** (~2.3 GB) — for lower-RAM devices (6 GB)
+| ID | Size (Q4_K_M) | Context | Tool calling | Min RAM |
+|---|---:|---:|:---:|---:|
+| `gemma-4-e2b-it` | 3.1 GB | 8K | yes | 4 GB |
+| `gemma-4-e4b-it` | 5.3 GB | 8K | yes | 6 GB |
+| `qwen-3.5-0.8b` | 0.5 GB | 4K | yes | 2 GB |
+| `qwen-3.5-4b` | 2.7 GB | 8K | yes | 4 GB |
+| `llama-3.2-1b` | 0.8 GB | 4K | no | 2 GB |
+| `llama-3.2-3b` | 2.0 GB | 8K | yes | 4 GB |
+| `smollm2-1.7b` | 1.1 GB | 4K | no | 2 GB |
 
-Any GGUF model compatible with `llama.rn` should work, but function calling (tool use) is only tested with Gemma 4.
+```tsx
+// Built-in catalog: pass a string ID.
+<GemmaAgentProvider model="qwen-3.5-4b" skills={skills}>
+  <App />
+</GemmaAgentProvider>
+
+// Custom model: pass a ModelConfig.
+<GemmaAgentProvider
+  model={{
+    repoId: 'your-org/your-gguf-repo',
+    filename: 'your-model.gguf',
+    expectedSize: 1_500_000_000,
+  }}
+  skills={skills}
+>
+  <App />
+</GemmaAgentProvider>
+```
+
+Any GGUF compatible with `llama.rn` should work. Tool calling is tested for the models flagged `yes` above; models flagged `no` are chat-only and will ignore any `skills` you register.
+
+### Letting your user pick a model
+
+If you want to ship an in-app model picker, wire it with the catalog helpers and a `key` prop on the provider. Changing the key remounts the provider under the new model; the conversation resets, which is the correct behaviour when the underlying tokenizer changes.
+
+```tsx
+import {
+  GemmaAgentProvider,
+  listModels,
+  getModelEntry,
+} from 'react-native-gemma-agent';
+
+function App() {
+  const [modelId, setModelId] = useState('gemma-4-e2b-it');
+
+  return (
+    <>
+      <Picker selectedValue={modelId} onValueChange={setModelId}>
+        {listModels().map(id => (
+          <Picker.Item
+            key={id}
+            label={getModelEntry(id)!.name}
+            value={id}
+          />
+        ))}
+      </Picker>
+
+      <GemmaAgentProvider key={modelId} model={modelId} skills={skills}>
+        <ChatScreen />
+      </GemmaAgentProvider>
+    </>
+  );
+}
+```
+
+Inside `<ChatScreen />`, the usual hooks work per-model:
+
+- `useModelDownload()` — `checkModel()`, `download()` with progress, `setModelPath()` for adb-pushed files. All scoped to whichever model the provider currently holds.
+- `useGemmaAgent()` — `loadModel()` / `unloadModel()`.
+
+A minimal end-user flow:
+
+1. User picks a model → the picker updates `modelId` → provider remounts.
+2. App calls `checkModel()`. If `false`, show a "Download (X GB)" button that calls `download()` and renders `progress.percent`.
+3. Once the file is present, call `loadModel()` and surface progress to the user.
+
+The pinned commit SHA and SHA-256 in each catalog entry are applied automatically during `download()`, so integrity is enforced without extra code on your side.
+
+For repeated dev iteration without re-downloading, use the CLI:
+
+```sh
+npx react-native-gemma-agent pull qwen-3.5-4b
+# prints an `adb push ~/.cache/.../file.gguf /data/local/tmp/file.gguf` hint
+```
+
+`ModelManager.findModel()` checks `/data/local/tmp/<filename>` as a fallback, so an adb-pushed file is discovered at load time without a download prompt.
 
 ## Future Plans
 

@@ -8,8 +8,24 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { z } from 'zod';
 import { useGemmaAgentContext } from '../../src/GemmaAgentProvider';
 import { generateStructured } from '../../src/StructuredOutput';
+
+const TC_23_1_SCHEMA = z.object({
+  title: z.string(),
+  date: z.string(),
+  attendees: z.array(z.string()).optional(),
+});
+
+const TC_23_1_PROMPT =
+  'Dinner with Priya and Arjun on Saturday 8pm at Bombay Canteen';
+
+type Tc231State =
+  | { kind: 'idle' }
+  | { kind: 'busy' }
+  | { kind: 'ok'; object: unknown; attempts: number }
+  | { kind: 'err'; message: string };
 
 const EVENT_SCHEMA = {
   type: 'object',
@@ -39,8 +55,30 @@ export function StructuredTab() {
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempts, setAttempts] = useState<number | null>(null);
+  const [tc231, setTc231] = useState<Tc231State>({ kind: 'idle' });
 
   const ready = engine.isLoaded;
+
+  const handleTc231 = async () => {
+    if (!ready || tc231.kind === 'busy') return;
+    setTc231({ kind: 'busy' });
+    try {
+      const out = await generateStructured<{
+        title: string;
+        date: string;
+        attendees?: string[];
+      }>(engine, {
+        schema: TC_23_1_SCHEMA,
+        prompt: TC_23_1_PROMPT,
+      });
+      console.log('[TC-23.1]', JSON.stringify(out));
+      setTc231({ kind: 'ok', object: out.object, attempts: out.attempts });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.log('[TC-23.1] error:', message);
+      setTc231({ kind: 'err', message });
+    }
+  };
 
   const handleExtract = async () => {
     if (!ready || busy) return;
@@ -120,6 +158,42 @@ export function StructuredTab() {
           <Text style={styles.resultErr}>{error}</Text>
         </>
       )}
+
+      <View style={styles.divider} />
+
+      <Text style={styles.label}>TC-23.1 — Zod schema round-trip</Text>
+      <Text style={styles.hint}>Prompt: {TC_23_1_PROMPT}</Text>
+      <TouchableOpacity
+        style={[
+          styles.btn,
+          (tc231.kind === 'busy' || !ready) && styles.btnDisabled,
+        ]}
+        onPress={handleTc231}
+        disabled={tc231.kind === 'busy' || !ready}
+      >
+        {tc231.kind === 'busy' ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : (
+          <Text style={styles.btnText}>Run TC-23.1 (Zod)</Text>
+        )}
+      </TouchableOpacity>
+
+      {tc231.kind === 'ok' && (
+        <>
+          <Text style={styles.label}>
+            TC-23.1 result (attempt {tc231.attempts})
+          </Text>
+          <Text style={styles.resultOk}>
+            {JSON.stringify(tc231.object, null, 2)}
+          </Text>
+        </>
+      )}
+      {tc231.kind === 'err' && (
+        <>
+          <Text style={styles.label}>TC-23.1 error</Text>
+          <Text style={styles.resultErr}>{tc231.message}</Text>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -182,5 +256,11 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 6,
     lineHeight: 18,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#333',
+    marginTop: 24,
+    marginBottom: 4,
   },
 });
