@@ -1184,7 +1184,7 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 - Model answers `132678` from parametric memory without invoking the skill — `Calling skill: calculator` is MISSING. Fail the case: the point is to prove the skill path fires, not that Gemma can multiply.
 - Tool-call JSON leaks into the visible chat bubble (`{"tool_call":...}` appears as assistant text). Fail: means the assistant-with-tool_calls content-stripping regressed.
 
-**Result**: [ ] Pass / [ ] Fail
+**Result**: [x] Pass
 
 ### TC-21.2: qwen-3.5-4b reasoning trace stays out of the user-visible reply
 **Precondition**: Qwen 3.5 4B GGUF pushed to `/data/local/tmp/Qwen3.5-4B-Q4_K_M.gguf`. `MODEL_CONFIG` resolves to `qwen-3.5-4b`. Provider/useLLM left at default system prompt.
@@ -1200,10 +1200,10 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 - Chat bubble shows both the reasoning and the final answer concatenated. Fail: the reasoning-format stripping expected from `reasoningFormat: 'qwen'` regressed.
 - Response is a single sentence `2h 35m` that skipped reasoning entirely — possible when Qwen's thinking mode is off by default in the chat template. Not an automatic fail, but inspect logcat for the reasoning field; if it's empty on every turn, the `enable_thinking` / `reasoning_format` passthrough in `InferenceEngine.generate` is not reaching the native layer.
 
-**Result**: [ ] Pass / [ ] Fail
+**Result**: [x] Pass
 
 ### TC-21.3: smollm2-1.7b (no tool calling) chats and degrades gracefully on a tool-leaning prompt
-**Precondition**: SmolLM 2 1.7B pushed to `/data/local/tmp/smollm2-1.7b-instruct-Q4_K_M.gguf`. `MODEL_CONFIG` resolves to `smollm2-1.7b`. Registry entry has `toolCalling: false`.
+**Precondition**: SmolLM 2 1.7B pushed to `/data/local/tmp/SmolLM2-1.7B-Instruct-Q4_K_M.gguf` (case-sensitive on Android). `MODEL_CONFIG` resolves to `smollm2-1.7b`. Registry entry has `toolCalling: false`.
 **Steps**:
 1. Load model.
 2. From the **Chat** tab (agent mode, skills loaded) send `What is the current time in Mumbai?` — a prompt that would normally pull a skill.
@@ -1217,7 +1217,7 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 - Model emits a literal `{"tool_call": {...}}` string in the chat bubble — means the assistant treats the tool schema as output instructions but the model can't actually emit tool calls. This was the Hammer 2.1 / Llama 1B failure mode. Fail.
 - App crashes or stalls on the tool-leaning turn — the skill system should never receive a call from a `toolCalling: false` model. Fail.
 
-**Result**: [ ] Pass / [ ] Fail
+**Result**: [x] Pass
 
 ---
 
@@ -1229,6 +1229,7 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 **Precondition**: Fresh install of the example app. `MODEL_CONFIG` resolves to `gemma-4-e2b-it`.
 **Steps**:
 1. On the dev machine: `npx react-native-gemma-agent pull gemma-4-e2b-it`. Let it verify SHA-256 and print the `adb push` hint.
+   - **Pre-publish (before v0.3.0 is on npm)**: `npm run build && node lib/cli/pull.js pull gemma-4-e2b-it` from the repo root. Same behaviour, just bypasses the npm registry.
 2. Run the printed `adb push <cache-path> /data/local/tmp/gemma-4-E2B-it-Q4_K_M.gguf`.
 3. Open the app. From the **Chat** tab tap **Load Model** (not **Download**).
 
@@ -1241,13 +1242,14 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 - App falls through to the download path even though the file is present — means `findModel()` missed the `/data/local/tmp/` fallback or the CLI wrote to the wrong filename.
 - Model loads but the file at `/data/local/tmp/` is 0 bytes or truncated — means the `adb push` silently failed. Compare the on-device `stat` size against the CLI's cached file.
 
-**Result**: [ ] Pass / [ ] Fail
+**Result**: [x] Pass
 
 ### TC-22.2: CLI downloads, verifies SHA-256, prints the push hint
 **Precondition**: Clean `~/.cache/react-native-gemma-agent/` on the dev machine. Internet online.
 **Steps**:
 1. `rm -rf ~/.cache/react-native-gemma-agent/models/gemma-4-e2b-it/`.
 2. Run `npx react-native-gemma-agent pull gemma-4-e2b-it`.
+   - **Pre-publish (before v0.3.0 is on npm)**: `npm run build && node lib/cli/pull.js pull gemma-4-e2b-it` from the repo root.
 
 **Expected**:
 - Progress updates print on stderr or stdout (bytes / percent); the download lands at `~/.cache/react-native-gemma-agent/models/gemma-4-e2b-it/gemma-4-E2B-it-Q4_K_M.gguf`.
@@ -1260,7 +1262,7 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 - URL in flight uses `/resolve/main/` instead of `/resolve/<commitSha>/` (visible in a network log). Fail — reproducibility guarantee broken.
 - File is downloaded but is 0 bytes and the SHA check "passes" against a bogus empty-file hash. Fail — indicates the hash lookup regressed to an unrelated value.
 
-**Result**: [ ] Pass / [ ] Fail
+**Result**: [x] Pass
 
 ### TC-22.3: Corrupted cache file is detected, partial is deleted, error is clear
 **Precondition**: Run TC-22.2 first so the cache file exists.
@@ -1278,7 +1280,7 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 - Error message shows only "SHA-256 mismatch" with no hex, so the user can't tell whether it's their corruption or a registry drift. Fail: the assertChecksumMatches contract requires both hashes.
 - CLI re-downloads and overwrites without complaining, hiding the corruption — acceptable if and only if the post-download SHA verify still runs and passes against the pinned hash.
 
-**Result**: [ ] Pass / [ ] Fail
+**Result**: [x] Pass — clean re-download path. dd flipped the last 16 bytes (SHA went `ac0069eb...576845` → `070ee985...8218152`), CLI detected the mismatch via `fileMatchesChecksum`, re-downloaded from `/resolve/f064409f.../`, printed `Verified SHA-256. Wrote 3106735776 bytes.`, final hash restored to `ac0069eb...576845`. Exit 0.
 
 ---
 

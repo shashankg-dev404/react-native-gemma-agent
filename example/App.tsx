@@ -17,7 +17,7 @@ import {
   GemmaAgentProvider,
   useGemmaAgent,
   useModelDownload,
-  type ModelConfig,
+  BUILT_IN_MODELS,
   type Message,
   type AgentEvent,
 } from '../src';
@@ -34,11 +34,13 @@ import { StructuredTab } from './src/StructuredTab';
 
 // --- Config ---
 
-const MODEL_CONFIG: ModelConfig = {
-  repoId: 'unsloth/gemma-4-E2B-it-GGUF',
-  filename: 'gemma-4-E2B-it-Q4_K_M.gguf',
-  expectedSize: 3_110_000_000,
-};
+const TESTABLE_MODELS = [
+  { id: 'gemma-4-e2b-it', label: 'Gemma 4 E2B' },
+  { id: 'qwen-3.5-4b', label: 'Qwen 3.5 4B' },
+  { id: 'smollm2-1.7b', label: 'SmolLM2 1.7B' },
+] as const;
+
+type TestableModelId = (typeof TESTABLE_MODELS)[number]['id'];
 
 const SYSTEM_PROMPT = `You are a helpful AI assistant running entirely on-device via Gemma 4. Answer the user directly and concisely. Do not show reasoning steps or tool evaluation. Use the tools available to you when needed.`;
 
@@ -57,15 +59,23 @@ const ALL_SKILLS = [
 // --- App Entry ---
 
 export default function App() {
+  const [modelId, setModelId] = useState<TestableModelId>('gemma-4-e2b-it');
+  const modelFilename = BUILT_IN_MODELS[modelId].filename;
+
   return (
     <SafeAreaProvider>
       <GemmaAgentProvider
-        model={MODEL_CONFIG}
+        key={modelId}
+        model={modelId}
         skills={ALL_SKILLS}
         systemPrompt={SYSTEM_PROMPT}
         knowledgeStore={knowledgeStore}
       >
-        <ChatScreen />
+        <ChatScreen
+          modelId={modelId}
+          modelFilename={modelFilename}
+          onSelectModel={setModelId}
+        />
       </GemmaAgentProvider>
     </SafeAreaProvider>
   );
@@ -79,7 +89,17 @@ type LogEntry = {
   type: 'info' | 'error' | 'success' | 'skill';
 };
 
-function ChatScreen() {
+type ChatScreenProps = {
+  modelId: TestableModelId;
+  modelFilename: string;
+  onSelectModel: (id: TestableModelId) => void;
+};
+
+function ChatScreen({
+  modelId,
+  modelFilename,
+  onSelectModel,
+}: ChatScreenProps) {
   const {
     sendMessage,
     messages,
@@ -127,6 +147,23 @@ function ChatScreen() {
     [],
   );
 
+  // --- Model Switching ---
+
+  const handleSelectModel = async (nextId: TestableModelId) => {
+    if (nextId === modelId) return;
+    if (isModelLoaded) {
+      try {
+        await unloadModel();
+        addLog(`Unloaded ${modelId}`, 'info');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addLog(`Unload failed: ${msg}`, 'error');
+        return;
+      }
+    }
+    onSelectModel(nextId);
+  };
+
   // --- Model Loading ---
 
   const handleFindOrLoad = async () => {
@@ -136,7 +173,7 @@ function ChatScreen() {
       if (!found) {
         // Try /data/local/tmp/ fallback (adb push path)
         try {
-          await setModelPath(`/data/local/tmp/${MODEL_CONFIG.filename}`);
+          await setModelPath(`/data/local/tmp/${modelFilename}`);
           addLog('Model found at /data/local/tmp/', 'success');
         } catch {
           addLog('Model not found. Push via adb or tap Download.', 'error');
@@ -253,6 +290,30 @@ function ChatScreen() {
             on-device AI | {ALL_SKILLS.length} skills |{' '}
             {isModelLoaded ? 'ready' : modelStatus}
           </Text>
+        </View>
+
+        {/* Model Picker (test harness) */}
+        <View style={styles.pickerRow}>
+          {TESTABLE_MODELS.map(m => {
+            const selected = m.id === modelId;
+            return (
+              <TouchableOpacity
+                key={m.id}
+                style={[styles.pickerBtn, selected && styles.pickerBtnActive]}
+                onPress={() => handleSelectModel(m.id)}
+                disabled={isLoading || isDownloading}
+              >
+                <Text
+                  style={[
+                    styles.pickerBtnText,
+                    selected && styles.pickerBtnTextActive,
+                  ]}
+                >
+                  {m.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* Metrics Bar */}
@@ -631,6 +692,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#888',
     marginTop: 2,
+  },
+  pickerRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    gap: 6,
+  },
+  pickerBtn: {
+    flex: 1,
+    backgroundColor: '#16213e',
+    borderRadius: 6,
+    paddingVertical: 6,
+    alignItems: 'center',
+  },
+  pickerBtnActive: {
+    backgroundColor: '#1565C0',
+  },
+  pickerBtnText: {
+    color: '#888',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  pickerBtnTextActive: {
+    color: '#fff',
   },
   metricsBar: {
     flexDirection: 'row',

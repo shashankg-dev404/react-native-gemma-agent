@@ -199,7 +199,11 @@ async function main(): Promise<void> {
   }
 
   if (subcommand !== 'pull') {
-    console.error(`Unknown subcommand "${subcommand}".`);
+    if (BUILT_IN_MODELS[subcommand]) {
+      console.error(`"${subcommand}" is a model id, not a subcommand. Did you mean: pull ${subcommand}`);
+    } else {
+      console.error(`Unknown subcommand "${subcommand}".`);
+    }
     printUsage();
     process.exit(1);
   }

@@ -23,7 +23,9 @@
     "react-native-fs": "^2.20.0",
     "react-native-safe-area-context": "^5.5.2",
     "react-native-webview": "^13.16.1",
-    "web-streams-polyfill": "^4.2.0"
+    "web-streams-polyfill": "^4.2.0",
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
