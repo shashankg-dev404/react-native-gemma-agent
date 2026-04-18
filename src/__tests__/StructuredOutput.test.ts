@@ -80,7 +80,7 @@ describe('toJsonSchema', () => {
     expect(toJsonSchema(schema as Record<string, unknown>)).toBe(schema);
   });
 
-  it('throws a clear error when a Zod schema is passed but zod-to-json-schema is missing', () => {
+  it('throws a clear error when a Zod v3 schema is passed but zod-to-json-schema is missing', () => {
     const fake = {
       _def: { typeName: 'ZodObject' },
       safeParse: () => ({ success: true, data: {} }),
@@ -89,6 +89,18 @@ describe('toJsonSchema', () => {
     expect(() => toJsonSchema(fake)).toThrow(
       /zod-to-json-schema.*not installed/,
     );
+  });
+
+  it('uses the Zod v4 native toJSONSchema method when present', () => {
+    const converted = { type: 'object', properties: { x: { type: 'string' } } };
+    const zod4Schema = {
+      _def: { typeName: 'ZodObject' },
+      safeParse: () => ({ success: true, data: {} }),
+      parse: () => ({}),
+      toJSONSchema: jest.fn(() => converted),
+    };
+    expect(toJsonSchema(zod4Schema)).toBe(converted);
+    expect(zod4Schema.toJSONSchema).toHaveBeenCalledTimes(1);
   });
 });
 

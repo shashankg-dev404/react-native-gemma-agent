@@ -19,7 +19,7 @@ import type {
   InferenceEngineConfig,
   AgentConfig,
 } from './types';
-import { resolveModelConfig } from './ModelRegistry';
+import { getModelEntry, resolveModelConfig } from './ModelRegistry';
 
 export type GemmaAgentContextValue = {
   modelManager: ModelManager;
@@ -70,7 +70,17 @@ export function GemmaAgentProvider({
     const engine = new InferenceEngine(engineConfig);
     const registry = new SkillRegistry();
 
+    const registryEntry =
+      typeof model === 'string' ? getModelEntry(model) : null;
+    const reasoningDefaults = registryEntry?.reasoningFormat
+      ? {
+          enable_thinking: true,
+          reasoning_format: registryEntry.reasoningFormat,
+        }
+      : {};
+
     const orchestrator = new AgentOrchestrator(engine, registry, {
+      ...reasoningDefaults,
       ...agentConfig,
       systemPrompt: systemPrompt ?? agentConfig?.systemPrompt,
     });

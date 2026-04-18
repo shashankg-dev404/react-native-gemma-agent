@@ -178,9 +178,15 @@ export async function runToolLoop(
         onPart({ type: 'reasoning-end', id: rId });
       }
 
-      if (result.reasoning) {
-        // tokenBuffer mixes thinking + text tokens; use result.content instead
-        const cleanText = (result.content || '').trim();
+      const usesReasoning =
+        !!result.reasoning ||
+        (!!config.reasoning_format && config.reasoning_format !== 'none');
+
+      if (usesReasoning) {
+        // tokenBuffer mixes thinking + text tokens; prefer clean content
+        // and strip any <think>...</think> blocks llama.rn didn't remove
+        // (including empty ones emitted by the chat template).
+        const cleanText = stripThinkTags(result.content || '').trim();
         if (cleanText) {
           const textId = `text-${depth}`;
           onPart({ type: 'text-start', id: textId });
@@ -262,7 +268,11 @@ export async function runToolLoop(
     }
 
     if (parsedCalls.length === 0) {
-      let responseText = (result.content || result.text).trim();
+      const rawText = result.content || result.text;
+      let responseText =
+        config.reasoning_format && config.reasoning_format !== 'none'
+          ? stripThinkTags(rawText).trim()
+          : rawText.trim();
       if (!responseText && depth > 1) {
         const lastToolMsg = [...conversation, ...appended]
           .slice()
@@ -416,6 +426,12 @@ function buildUsage(result: CompletionResult): RunToolLoopUsage {
     promptTokens: result.timings.promptTokens,
     completionTokens: result.timings.predictedTokens,
   };
+}
+
+const THINK_TAG_PATTERN = /<think>[\s\S]*?<\/think>\s*/g;
+
+function stripThinkTags(text: string): string {
+  return text.replace(THINK_TAG_PATTERN, '');
 }
 
 function getToolsForQuery(

@@ -5,6 +5,8 @@ type ZodLike = {
   _def: unknown;
   safeParse: (data: unknown) => { success: true; data: unknown } | { success: false; error: unknown };
   parse: (data: unknown) => unknown;
+  // Zod 4+ ships a native JSON Schema converter on the schema itself.
+  toJSONSchema?: () => Record<string, unknown>;
 };
 
 export type StructuredOutputSchema =
@@ -43,13 +45,16 @@ export function toJsonSchema(schema: StructuredOutputSchema): Record<string, unk
   if (!isZodSchema(schema)) {
     return schema;
   }
+  if (typeof schema.toJSONSchema === 'function') {
+    return schema.toJSONSchema();
+  }
   let converter: ((s: unknown) => Record<string, unknown>) | null = null;
   try {
     const mod = require('zod-to-json-schema');
     converter = mod.zodToJsonSchema ?? mod.default ?? mod;
   } catch {
     throw new Error(
-      'generateStructured: received a Zod schema but `zod-to-json-schema` is not installed. Run `npm install zod-to-json-schema` or pass a plain JSON Schema object instead.',
+      'generateStructured: received a Zod v3 schema but `zod-to-json-schema` is not installed. Install it (`npm install zod-to-json-schema`), upgrade to Zod v4 (which ships a native `toJSONSchema` method), or pass a plain JSON Schema object.',
     );
   }
   if (typeof converter !== 'function') {

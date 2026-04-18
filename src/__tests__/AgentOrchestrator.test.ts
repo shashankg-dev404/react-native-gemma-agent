@@ -640,4 +640,55 @@ describe('AgentOrchestrator', () => {
       expect(engine.resetContextUsage).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('reasoning format wiring', () => {
+    it('forwards enable_thinking and reasoning_format to engine.generate', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({ content: 'hello', text: 'hello' });
+
+      const orchestrator = makeOrchestrator(engine, [], {
+        enable_thinking: true,
+        reasoning_format: 'qwen',
+      });
+
+      await orchestrator.sendMessage('hi');
+      const opts = engine.generateCallArgs[0].options as any;
+      expect(opts.enable_thinking).toBe(true);
+      expect(opts.reasoning_format).toBe('qwen');
+    });
+
+    it('strips empty <think></think> blocks from visible response', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({
+        content: '<think>\n\n</think>\n\nThe journey was 155 minutes long.',
+        text: '<think>\n\n</think>\n\nThe journey was 155 minutes long.',
+      });
+
+      const orchestrator = makeOrchestrator(engine, [], {
+        reasoning_format: 'qwen',
+      });
+
+      const response = await orchestrator.sendMessage('hi');
+      expect(response).not.toContain('<think>');
+      expect(response).not.toContain('</think>');
+      expect(response).toContain('155 minutes');
+    });
+
+    it('strips populated <think>...</think> blocks from visible response', async () => {
+      const engine = new MockInferenceEngine();
+      engine.pushResponse({
+        content: '<think>step 1: subtract 14:20 from 16:55</think>\n\nAnswer: 2h 35m',
+        text: '<think>step 1: subtract 14:20 from 16:55</think>\n\nAnswer: 2h 35m',
+      });
+
+      const orchestrator = makeOrchestrator(engine, [], {
+        reasoning_format: 'qwen',
+      });
+
+      const response = await orchestrator.sendMessage('hi');
+      expect(response).not.toContain('<think>');
+      expect(response).not.toContain('step 1');
+      expect(response).toContain('2h 35m');
+    });
+  });
 });

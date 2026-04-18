@@ -33,6 +33,17 @@ const DEFAULT_GENERATE: Required<Pick<GenerateOptions, 'maxTokens' | 'temperatur
   topK: 40,
 };
 
+// llama.rn (cpp/common/chat.cpp) only accepts 'none' | 'auto' | 'deepseek' | 'deepseek-legacy'.
+// Our registry uses 'qwen' as the internal tag for Qwen-family models, which wrap reasoning in
+// the same <think>...</think> envelope as DeepSeek, so the DeepSeek native parser handles them.
+function toNativeReasoningFormat(
+  format: GenerateOptions['reasoning_format'],
+): 'none' | 'auto' | 'deepseek' {
+  if (format === 'qwen') return 'deepseek';
+  if (format === 'deepseek' || format === 'none') return format;
+  return 'none';
+}
+
 type LoadedModelInfo = {
   gpu: boolean;
   reasonNoGPU: string;
@@ -172,7 +183,7 @@ export class InferenceEngine {
         stop: options?.stop,
         jinja: true,
         enable_thinking: options?.enable_thinking ?? false,
-        reasoning_format: options?.reasoning_format ?? 'none',
+        reasoning_format: toNativeReasoningFormat(options?.reasoning_format),
       };
 
       if (options?.tools && options.tools.length > 0) {
