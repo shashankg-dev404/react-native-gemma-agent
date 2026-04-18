@@ -29,6 +29,8 @@ const DEFAULT_CONFIG: ResolvedConfig = {
   activeCategories: undefined,
   contextWarningThreshold: 0.8,
   onContextWarning: undefined,
+  enable_thinking: false,
+  reasoning_format: 'none',
 };
 
 export class AgentOrchestrator {
@@ -109,6 +111,8 @@ export class AgentOrchestrator {
           skillRouting: this.config.skillRouting,
           maxToolsPerInvocation: this.config.maxToolsPerInvocation,
           activeCategories: this.config.activeCategories,
+          enable_thinking: this.config.enable_thinking,
+          reasoning_format: this.config.reasoning_format,
         },
         {
           systemPrompt,

@@ -169,6 +169,40 @@ describe('InferenceEngine', () => {
     });
   });
 
+  describe('reasoning_format native boundary translation', () => {
+    it("translates internal 'qwen' tag to 'deepseek' before calling completion", async () => {
+      await engine.loadModel('/tmp/test.gguf');
+      queueCompletion(10, 5);
+      await engine.generate([{ role: 'user', content: 'hi' }], {
+        reasoning_format: 'qwen',
+        enable_thinking: true,
+      });
+      const params = llamaRn.__mockContext.completion.mock.calls[0][0];
+      expect(params.reasoning_format).toBe('deepseek');
+      expect(params.enable_thinking).toBe(true);
+    });
+
+    it("passes 'deepseek' through unchanged", async () => {
+      await engine.loadModel('/tmp/test.gguf');
+      queueCompletion(10, 5);
+      await engine.generate([{ role: 'user', content: 'hi' }], {
+        reasoning_format: 'deepseek',
+      });
+      expect(
+        llamaRn.__mockContext.completion.mock.calls[0][0].reasoning_format,
+      ).toBe('deepseek');
+    });
+
+    it("defaults to 'none' when reasoning_format is omitted", async () => {
+      await engine.loadModel('/tmp/test.gguf');
+      queueCompletion(10, 5);
+      await engine.generate([{ role: 'user', content: 'hi' }]);
+      expect(
+        llamaRn.__mockContext.completion.mock.calls[0][0].reasoning_format,
+      ).toBe('none');
+    });
+  });
+
   describe('unload() — Bug 2 regression', () => {
     it('zeroes cumulative usage and last-call token counters', async () => {
       await engine.loadModel('/tmp/test.gguf');

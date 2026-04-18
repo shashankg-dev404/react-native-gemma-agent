@@ -218,6 +218,10 @@ export type AgentConfig = {
    * once per conversation until `reset()` is called.
    */
   onContextWarning?: (usage: ContextUsage) => void;
+  /** Enable the model's thinking / reasoning mode (Qwen, DeepSeek). Default: false. */
+  enable_thinking?: boolean;
+  /** Reasoning format the model emits; llama.rn strips these into reasoning_content. Default: 'none'. */
+  reasoning_format?: 'none' | 'deepseek' | 'qwen';
 };
 
 export type ContextUsage = {
