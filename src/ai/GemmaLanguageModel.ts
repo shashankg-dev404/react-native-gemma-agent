@@ -254,7 +254,7 @@ export class GemmaLanguageModel implements LanguageModelV3 {
       .filter((t) => t.type !== 'function')
       .map(
         (t) =>
-          `Provider tool "${(t as { name?: string }).name ?? 'unknown'}" dropped — only function tools are supported`,
+          `Provider tool "${(t as { name?: string }).name ?? 'unknown'}" dropped: only function tools are supported`,
       );
 
     const { consumerTools, collisionWarnings } = separateProviderAndConsumerTools(
@@ -282,12 +282,12 @@ export class GemmaLanguageModel implements LanguageModelV3 {
 
     if (options.toolChoice && options.toolChoice.type === 'tool') {
       warnings.push(
-        `toolChoice { type: 'tool', toolName: '${options.toolChoice.toolName}' } downgraded to 'auto' — per-tool selection is not supported yet`,
+        `toolChoice { type: 'tool', toolName: '${options.toolChoice.toolName}' } downgraded to 'auto'. Per-tool selection is not supported yet.`,
       );
     }
     if (options.toolChoice && options.toolChoice.type === 'required') {
       warnings.push(
-        "toolChoice 'required' downgraded to 'auto' — forced tool calls are not supported yet",
+        "toolChoice 'required' downgraded to 'auto'. Forced tool calls are not supported yet.",
       );
     }
 
@@ -398,7 +398,7 @@ export class GemmaLanguageModel implements LanguageModelV3 {
     const warningStrings = [...prepareWarnings];
     if (options.tools && options.tools.length > 0) {
       warningStrings.push(
-        'Tools are ignored when responseFormat is "json" — structured output and tool calling are mutually exclusive',
+        'Tools are ignored when responseFormat is "json": structured output and tool calling are mutually exclusive',
       );
     }
 

@@ -63,7 +63,7 @@ export const SkillSandbox = forwardRef<SkillSandboxHandle>(
           if (pendingRef.current) {
             clearTimeout(pendingRef.current.timer);
             pendingRef.current.reject(
-              new Error('Execution cancelled — new skill started'),
+              new Error('Execution cancelled: new skill started'),
             );
             pendingRef.current = null;
           }

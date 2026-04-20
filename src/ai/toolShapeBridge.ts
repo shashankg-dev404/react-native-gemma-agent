@@ -24,7 +24,7 @@ export function v3ToolToToolDefinition(
 
   if (!isObjectSchema) {
     warnings.push(
-      `Tool "${tool.name}" has no object inputSchema — sending empty parameters`,
+      `Tool "${tool.name}" has no object inputSchema; sending empty parameters`,
     );
   }
 
@@ -71,7 +71,7 @@ export function separateProviderAndConsumerTools(
   for (const v3Tool of tools ?? []) {
     if (skillNames.has(v3Tool.name)) {
       collisionWarnings.push(
-        `Consumer tool "${v3Tool.name}" dropped — a registered skill with the same name takes precedence`,
+        `Consumer tool "${v3Tool.name}" dropped: a registered skill with the same name takes precedence`,
       );
       continue;
     }

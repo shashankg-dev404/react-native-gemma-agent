@@ -66,7 +66,7 @@ function httpDownload(
         if (status === 401 || status === 403) {
           reject(
             new Error(
-              `HTTP ${status} — this repo may require authentication. Set HF_TOKEN in your environment (https://huggingface.co/settings/tokens).`,
+              `HTTP ${status}. This repo may require authentication. Set HF_TOKEN in your environment (https://huggingface.co/settings/tokens).`,
             ),
           );
           return;
