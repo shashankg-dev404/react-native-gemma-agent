@@ -137,37 +137,24 @@ export function useGemmaAgent(): UseGemmaAgentReturn {
           (event: AgentEvent) => {
             switch (event.type) {
               case 'token': {
-                // Accumulate into buffer to detect thinking vs content
                 tokenBufferRef.current += event.token;
                 const buf = tokenBufferRef.current;
 
-                // Gemma 4 outputs thinking as: thought\n<reasoning>
-                // followed by content after tool call results or directly.
-                // The `content` field in the final result has thinking stripped.
-                // For streaming: skip tokens until we see content starting.
-                // Since llama.rn gives us `content` (filtered) at the end,
-                // streamingText is a best-effort preview. We use it only
-                // when the model is generating the final answer (not thinking
-                // before a tool call).
-
-                // Don't stream during thinking phase — the model starts with
-                // "thought\n" or similar when reasoning before tool calls.
-                // We detect this by checking if the buffer starts with "thought"
+                // Gemma 4 prefixes reasoning with "thought\n" before the final
+                // answer. Suppress those tokens from streamingText so the UI
+                // only previews the answer. llama.rn returns stripped content
+                // at the end, so this is best-effort.
                 if (!seenContentRef.current) {
                   if (buf.length >= 7) {
                     if (buf.trimStart().startsWith('thought')) {
-                      // In thinking mode — don't stream these tokens
                       break;
                     }
-                    // Not thinking — start streaming
                     seenContentRef.current = true;
                     setStreamingText(buf);
                   }
-                  // Still buffering — wait for more tokens
                   break;
                 }
 
-                // We're in content mode — stream normally
                 setStreamingText((prev) => prev + event.token);
                 break;
               }
