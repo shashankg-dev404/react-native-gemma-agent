@@ -70,7 +70,7 @@ export class SkillRegistry {
 
   /**
    * Convert registered skills to OpenAI-compatible tool definitions.
-   * Pass these to InferenceEngine.generate() as the `tools` parameter —
+   * Pass these to InferenceEngine.generate() as the `tools` parameter.
    * llama.rn handles the rest via Jinja templates + Gemma 4 chat format.
    *
    * When activeCategories is provided, only skills in those categories are included.

@@ -178,7 +178,7 @@ export class KnowledgeStore {
 
     if (notes.length === 0) return [];
 
-    // Build BM25 index from notes as pseudo-skills — local scorer to avoid shared state
+    // Build BM25 index from notes as pseudo-skills. Local scorer to avoid shared state.
     const scorer = new BM25Scorer();
     const pseudoSkills: SkillManifest[] = notes.map((n) => ({
       name: n.title,
@@ -201,7 +201,7 @@ export class KnowledgeStore {
   }
 
   /**
-   * List all notes (metadata only — no full content).
+   * List all notes (metadata only, no full content).
    */
   async listNotes(): Promise<NoteIndexEntry[]> {
     await this.ensureDir();

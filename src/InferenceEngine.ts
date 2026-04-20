@@ -153,8 +153,8 @@ export class InferenceEngine {
           role: msg.role,
           content: msg.content ?? '',
         };
-        // Only include fields with actual string values — undefined/null
-        // fields become JSON null and crash llama.cpp's Jinja parser
+        // Only include fields with actual string values. Undefined/null
+        // fields become JSON null and crash llama.cpp's Jinja parser.
         if (msg.tool_calls && msg.tool_calls.length > 0) {
           m.tool_calls = msg.tool_calls.map(tc => ({
             type: tc.type,

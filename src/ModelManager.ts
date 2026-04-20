@@ -189,7 +189,7 @@ export class ModelManager {
     } catch (err) {
       this._downloadJobId = null;
 
-      // Don't delete partial file — allows resume on retry
+      // Don't delete partial file: allows resume on retry
       if (this._status !== 'ready') {
         this.setStatus('error');
       }

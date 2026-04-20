@@ -208,7 +208,7 @@ export class AgentOrchestrator {
       try {
         this.config.onContextWarning?.(usage);
       } catch {
-        // Swallow callback errors — never crash the agent loop
+        // Swallow callback errors. Never crash the agent loop.
       }
       onEvent?.({ type: 'context_warning', usage });
     }
