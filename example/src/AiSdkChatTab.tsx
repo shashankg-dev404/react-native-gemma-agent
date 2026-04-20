@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import {
   convertToModelMessages,
+  generateObject,
   jsonSchema,
   stepCountIs,
   streamText,
@@ -18,6 +19,7 @@ import {
   type UIMessage,
 } from 'ai';
 import { useChat } from '@ai-sdk/react';
+import { z } from 'zod';
 
 import { useGemmaAgentContext } from '../../src/GemmaAgentProvider';
 import { SkillSandbox, type SkillSandboxHandle } from '../../src/SkillSandbox';
@@ -76,12 +78,27 @@ function makeGemmaTransport({
   };
 }
 
+const TC_23_2_SCHEMA = z.object({
+  cityName: z.string(),
+  population: z.number(),
+  country: z.string(),
+});
+
+const TC_23_2_PROMPT = 'Give me basic facts about Mumbai.';
+
+type Tc232State =
+  | { kind: 'idle' }
+  | { kind: 'busy' }
+  | { kind: 'ok'; object: unknown }
+  | { kind: 'err'; message: string };
+
 export function AiSdkChatTab() {
   const { engine, registry, knowledgeStore, modelManager } =
     useGemmaAgentContext();
   const sandboxRef = useRef<SkillSandboxHandle>(null);
   const [routing, setRouting] = useState<'all' | 'bm25'>('all');
   const [input, setInput] = useState('');
+  const [tc232, setTc232] = useState<Tc232State>({ kind: 'idle' });
   const scrollRef = useRef<ScrollView>(null);
 
   const skillExecutor: SkillExecutor = useCallback((html, params, timeout) => {
@@ -124,6 +141,24 @@ export function AiSdkChatTab() {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   };
 
+  const handleTc232 = async () => {
+    if (!engine.isLoaded || tc232.kind === 'busy') return;
+    setTc232({ kind: 'busy' });
+    try {
+      const { object } = await generateObject({
+        model: provider('gemma-4-e2b'),
+        schema: TC_23_2_SCHEMA,
+        prompt: TC_23_2_PROMPT,
+      });
+      console.log('[TC-23.2]', JSON.stringify(object));
+      setTc232({ kind: 'ok', object });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.log('[TC-23.2] error:', message);
+      setTc232({ kind: 'err', message });
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.routingBar}>
@@ -151,6 +186,34 @@ export function AiSdkChatTab() {
           <TouchableOpacity onPress={() => stop()} style={styles.stopBtn}>
             <Text style={styles.stopBtnText}>Stop</Text>
           </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={styles.tc232Row}>
+        <TouchableOpacity
+          style={[
+            styles.tc232Btn,
+            (tc232.kind === 'busy' || !engine.isLoaded) &&
+              styles.tc232BtnDisabled,
+          ]}
+          onPress={handleTc232}
+          disabled={tc232.kind === 'busy' || !engine.isLoaded}
+        >
+          {tc232.kind === 'busy' ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Text style={styles.tc232BtnText}>
+              Run TC-23.2 (generateObject)
+            </Text>
+          )}
+        </TouchableOpacity>
+        {tc232.kind === 'ok' && (
+          <Text style={styles.tc232Ok}>
+            {JSON.stringify(tc232.object, null, 2)}
+          </Text>
+        )}
+        {tc232.kind === 'err' && (
+          <Text style={styles.tc232Err}>{tc232.message}</Text>
         )}
       </View>
 
@@ -353,4 +416,35 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: { backgroundColor: '#333' },
   sendBtnText: { color: '#fff', fontWeight: '600' },
+  tc232Row: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#222',
+    gap: 6,
+  },
+  tc232Btn: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  tc232BtnDisabled: { backgroundColor: '#555' },
+  tc232BtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  tc232Ok: {
+    backgroundColor: '#0a2a10',
+    color: '#b0ffb0',
+    fontFamily: 'monospace',
+    fontSize: 11,
+    padding: 8,
+    borderRadius: 6,
+  },
+  tc232Err: {
+    backgroundColor: '#3a1010',
+    color: '#ff9999',
+    fontFamily: 'monospace',
+    fontSize: 11,
+    padding: 8,
+    borderRadius: 6,
+  },
 });
