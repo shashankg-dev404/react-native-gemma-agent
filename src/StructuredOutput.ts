@@ -30,7 +30,18 @@ export type GenerateStructuredResult<T> = {
 };
 
 const DEFAULT_SYSTEM_PROMPT =
-  'You output JSON only. Respond with a single JSON object that conforms exactly to the provided schema. Do not include prose, markdown fences, or explanations.';
+  'You output JSON only. Do not include prose, markdown fences, or explanations.';
+
+function buildSystemPromptWithSchema(
+  base: string,
+  schema: Record<string, unknown>,
+): string {
+  return `${base}
+
+Respond with a single JSON object that conforms exactly to this JSON Schema:
+
+${JSON.stringify(schema, null, 2)}`;
+}
 
 export function isZodSchema(schema: unknown): schema is ZodLike {
   return (
@@ -108,7 +119,8 @@ export async function generateStructured<T>(
   const jsonSchema = toJsonSchema(input.schema);
   const maxRetries = input.maxRetries ?? 2;
 
-  const systemPrompt = input.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const baseSystem = input.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const systemPrompt = buildSystemPromptWithSchema(baseSystem, jsonSchema);
   const baseMessages: Message[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: input.prompt },
@@ -131,11 +143,6 @@ export async function generateStructured<T>(
 
     const result = await engine.generate(messages, {
       ...input.generateOptions,
-      responseFormat: {
-        type: 'json_schema',
-        schema: jsonSchema,
-        strict: true,
-      },
     });
 
     lastRaw = result.content ?? result.text ?? '';
