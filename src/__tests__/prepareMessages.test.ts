@@ -45,7 +45,7 @@ describe('prepareMessages', () => {
     const { messages, warnings } = prepareMessages(prompt);
     expect(messages).toEqual([{ role: 'user', content: 'look at this' }]);
     expect(warnings).toContain(
-      'FilePart dropped — multimodal not yet supported',
+      'FilePart dropped: multimodal not yet supported',
     );
   });
 

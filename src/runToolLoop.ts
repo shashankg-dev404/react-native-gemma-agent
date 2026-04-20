@@ -495,7 +495,7 @@ async function executeSkill(
   const { skill, parameters } = call;
 
   if (!skill) {
-    return { error: `Cannot execute skill "${call.name}" — not registered` };
+    return { error: `Cannot execute skill "${call.name}": not registered` };
   }
 
   if (skill.requiresNetwork) {
@@ -537,7 +537,7 @@ async function executeSkill(
   }
 
   return {
-    error: `Cannot execute skill "${call.name}" — unsupported type "${skill.type}"`,
+    error: `Cannot execute skill "${call.name}": unsupported type "${skill.type}"`,
   };
 }
 

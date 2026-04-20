@@ -42,7 +42,7 @@ export function prepareMessages(
             texts.push((part as LanguageModelV3TextPart).text);
           } else if (part.type === 'file') {
             warnings.push(
-              'FilePart dropped — multimodal not yet supported',
+              'FilePart dropped: multimodal not yet supported',
             );
           }
         }
@@ -75,7 +75,7 @@ export function prepareMessages(
             embeddedResults.push(part as LanguageModelV3ToolResultPart);
           } else if (part.type === 'file') {
             warnings.push(
-              'FilePart dropped — multimodal not yet supported',
+              'FilePart dropped: multimodal not yet supported',
             );
           }
         }
