@@ -126,12 +126,28 @@ describe('generateStructured', () => {
     expect(result.object).toEqual({ title: 'hello', count: 3 });
     expect(result.attempts).toBe(1);
     expect(engine.generateCallArgs.length).toBe(1);
-    const opts = engine.generateCallArgs[0].options;
-    expect(opts?.responseFormat).toEqual({
-      type: 'json_schema',
-      schema,
-      strict: true,
-    });
+    const call = engine.generateCallArgs[0];
+    expect(call.options?.responseFormat).toBeUndefined();
+    const systemMsg = call.messages.find((m) => m.role === 'system');
+    expect(systemMsg?.content).toContain('JSON Schema');
+    expect(systemMsg?.content).toContain('"title"');
+    expect(systemMsg?.content).toContain('"count"');
+  });
+
+  it('preserves the caller-supplied systemPrompt alongside the injected schema', async () => {
+    const engine = new MockEngine();
+    engine.pushResponseText('{"title":"x","count":0}');
+
+    await generateStructured<{ title: string; count: number }>(
+      engine as never,
+      { schema, prompt: 'extract', systemPrompt: 'You are a calendar bot.' },
+    );
+
+    const systemMsg = engine.generateCallArgs[0].messages.find(
+      (m) => m.role === 'system',
+    );
+    expect(systemMsg?.content).toContain('You are a calendar bot.');
+    expect(systemMsg?.content).toContain('JSON Schema');
   });
 
   it('retries when the model first emits unparseable text, then succeeds', async () => {

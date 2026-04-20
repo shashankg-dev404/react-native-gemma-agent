@@ -582,7 +582,7 @@ describe('GemmaLanguageModel', () => {
     ).toBe(true);
   });
 
-  it('doGenerate with responseFormat=json forwards schema and returns parsed JSON text', async () => {
+  it('doGenerate with responseFormat=json injects schema into system prompt and returns parsed JSON text', async () => {
     const engine = new MockInferenceEngine();
     engine.pushResponse({
       text: '{"title":"hello","count":7}',
@@ -614,13 +614,13 @@ describe('GemmaLanguageModel', () => {
     expect(textPart).toBeDefined();
     expect(JSON.parse(textPart!.text)).toEqual({ title: 'hello', count: 7 });
 
-    const callOptions = engine.generateCallArgs[0].options;
-    expect(callOptions?.responseFormat).toEqual({
-      type: 'json_schema',
-      schema: jsonSchema,
-      strict: true,
-    });
-    expect(callOptions?.tools).toBeUndefined();
+    const call = engine.generateCallArgs[0];
+    expect(call.options?.responseFormat).toBeUndefined();
+    expect(call.options?.tools).toBeUndefined();
+    const systemMsg = call.messages.find((m) => m.role === 'system');
+    expect(systemMsg?.content).toContain('JSON Schema');
+    expect(systemMsg?.content).toContain('"title"');
+    expect(systemMsg?.content).toContain('"count"');
   });
 
   it('doGenerate with responseFormat=json warns and ignores tools', async () => {

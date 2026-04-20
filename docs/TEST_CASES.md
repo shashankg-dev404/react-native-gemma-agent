@@ -1216,8 +1216,9 @@ Also leave the `[TC-19.B]` logger in place so the `stream-start.warnings` array 
 **Watch-outs / false-pass shapes**:
 - Model emits a literal `{"tool_call": {...}}` string in the chat bubble — means the assistant treats the tool schema as output instructions but the model can't actually emit tool calls. This was the Hammer 2.1 / Llama 1B failure mode. Fail.
 - App crashes or stalls on the tool-leaning turn — the skill system should never receive a call from a `toolCalling: false` model. Fail.
+- A fabricated but plausible answer to the time-in-Mumbai prompt (e.g. "The current time in Mumbai is 12:30 PM") is NOT a fail. The test guards the tool-call boundary, not SmolLM2 1.7B's factual recall. Only tool-call leakage, a skill invocation in Logs, or a crash fails this case.
 
-**Result**: [x] Pass
+**Result**: [x] Pass — re-verified on `Pixel_9_Pro(AVD) - 16` on 2026-04-20 alongside the option-B regression sweep. Mumbai prompt produced a hallucinated time, Saturn prompt produced a correct fact; both in a single prose bubble with no tool-call JSON and no skill invocation.
 
 ---
 
@@ -1314,12 +1315,14 @@ console.log('[TC-23.1]', JSON.stringify(result));
 
 **Expected**:
 - Log line contains `object: { title: "...", date: "...", attendees: [...] }` with sensible values pulled from the input text.
-- `attempts` is `1` (native grammar decoding succeeded on the first try).
-- No exceptions on the JS side; the call resolves within the usual generate timing.
+- `attempts` is `1` or `2` (prompt-injection path — most runs parse on attempt 1; a retry is expected occasionally when the model wraps output in markdown or adds prose).
+- No exceptions on the JS side; the call resolves within roughly 1.5–2× a normal chat generation of similar length (retry path adds a second full generation).
+- Latency note: because the schema is serialized into the system prompt, prompt-token count is higher than a plain chat call (~100–400 tokens depending on schema).
 
 **Watch-outs / false-pass shapes**:
-- `attempts` is `2` or `3` on every run, suggesting the grammar decoding path isn't wired correctly and we're falling through to the retry-only fallback. Check that `response_format` is being forwarded in the completion call (logcat should show the native params).
-- Result parses but `attendees` is missing/empty when the prompt explicitly names two people — means the model obeyed the schema but the prompt engineering isn't pulling required fields. Not an SDK bug, but note it.
+- `attempts` is `3` (retries exhausted) on every run — the model isn't conforming to the schema at all. Either the schema is too adversarial (overly tight regex, deeply nested enums) or the model is too small. Try a larger model, simplify the schema, or raise `maxRetries`.
+- Result parses but `attendees` is missing/empty when the prompt explicitly names two people — means the model obeyed the JSON shape but the prompt engineering isn't pulling required fields. Not an SDK bug, but note it.
+- Throws `std::exception` during `initSampling` — should NOT happen under option B since we no longer forward `response_format` to the native side. If it does, means some other code path is still passing `responseFormat` through; check `StructuredOutput.ts` hasn't regressed to the pre-2026-04-18 grammar-forwarding shape.
 - Throws "zod-to-json-schema not installed" despite the peer dep being present in `example/package.json` — means the lazy `require` path can't find the hoisted copy; bump the install location or fall back to `require.resolve` with explicit paths.
 
 **Result**: [ ] Pass / [ ] Fail
@@ -1353,8 +1356,8 @@ console.log('[TC-23.2]', object);
 - No `tools` warnings in the AI SDK response (we didn't pass any tools).
 
 **Watch-outs / false-pass shapes**:
-- `NoObjectGeneratedError` thrown despite the model producing plausible JSON — likely means our provider returned the raw JSON as a text content part, but the text contains a leading/trailing prose that fence-stripping missed. Inspect the raw text part in the AI SDK debug logs.
-- `object.population` is a string ("20000000") because grammar constraints treated `number` as a JSON number but the model emitted it quoted; AI SDK's `safeValidateTypes` should fail in that case. Fail on our side only if the primitive's retry path also gave up — the AI SDK itself does not retry.
+- `NoObjectGeneratedError` thrown despite the model producing plausible JSON — likely means our primitive exhausted retries. Re-run; if it reproduces, the schema is too adversarial or the model is too small. Confirm by logging `result.attempts` inside the primitive before the AI SDK ever sees the text part.
+- `object.population` is a string ("20000000") — prompt-injection path doesn't enforce JSON number-vs-string at decode time; the model quoted the value and the primitive's raw-JSON-schema validation doesn't catch type drift (only "is object" is checked). AI SDK's `safeValidateTypes` should fail in that case. Working as intended — wrap the schema in Zod if deeper validation is needed.
 - Provider silently routes the call through `runToolLoop` (skills appear in the tool field). Fail: the `responseFormat === 'json'` branch in `doGenerate` was bypassed.
 
 **Result**: [ ] Pass / [ ] Fail
