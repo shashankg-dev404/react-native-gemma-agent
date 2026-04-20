@@ -705,6 +705,17 @@ Shipped:
 - [x] On-device knowledge base (v0.2.0)
 - [x] Skill categories (v0.2.0)
 - [x] Context window warnings (v0.2.0)
+- [x] Vercel AI SDK V3 provider, `useLLM()`, `generateStructured()`, multi-model catalog, CLI bin (v0.3.0)
+
+## What's New in 0.3.0
+
+- AI SDK V3 provider at `react-native-gemma-agent/ai`, the `useLLM()` hook, and `generateStructured()` for Zod-validated output.
+- Multi-model catalog and `npx react-native-gemma-agent pull <model-id>` CLI for adb-push workflows.
+- `llama.rn` peer minimum bumped to `0.12.0-rc.8`. Earlier rc builds must be upgraded.
+- `ParsedToolCall.skill` is now `SkillManifest | null`. Only relevant if you strict-type-check tool-call results.
+- Deep imports like `react-native-gemma-agent/lib/*` are no longer resolvable. Use the public `.` and `./ai` entrypoints.
+
+Full notes in [CHANGELOG.md](./CHANGELOG.md).
 
 ## License
 
