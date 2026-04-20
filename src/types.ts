@@ -167,9 +167,9 @@ export type SkillManifest = {
   type: SkillType;
   parameters: Record<string, SkillParameter>;
   requiredParameters?: string[];
-  /** HTML content for JS skills — loaded into hidden WebView */
+  /** HTML content for JS skills, loaded into hidden WebView */
   html?: string;
-  /** Native execution function — for skills that run in RN context */
+  /** Native execution function for skills that run in RN context */
   execute?: (params: Record<string, unknown>) => Promise<SkillResult>;
   /** Instructions for the LLM on when/how to use this skill */
   instructions?: string;

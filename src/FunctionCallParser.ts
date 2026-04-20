@@ -6,7 +6,7 @@ export type ParsedToolCall = {
   parameters: Record<string, unknown>;
   /**
    * The matching skill manifest. Undefined when the call targets a
-   * consumer-supplied tool (isConsumerTool=true) — the loop terminates on
+   * consumer-supplied tool (isConsumerTool=true). The loop terminates on
    * consumer tool-calls rather than executing them.
    */
   skill: SkillManifest | null;

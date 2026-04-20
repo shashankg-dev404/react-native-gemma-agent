@@ -105,7 +105,7 @@ export type RunToolLoopInput = {
    * Skills run provider-executed (loop continues). When the model calls a
    * tool that matches an entry here but is NOT a registered skill, the loop
    * emits tool-input-start + tool-call (without providerExecuted) and
-   * terminates with finishReason 'tool-calls' — the consumer executes it.
+   * terminates with finishReason 'tool-calls'. The consumer executes it.
    */
   extraTools?: ToolDefinition[];
 };
