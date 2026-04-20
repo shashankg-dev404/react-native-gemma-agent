@@ -88,8 +88,8 @@ export class InferenceEngine {
 
   /**
    * Load a GGUF model into memory.
-   * @param modelPath — absolute path to the .gguf file on device
-   * @param onProgress — loading progress callback (0-100)
+   * @param modelPath - absolute path to the .gguf file on device
+   * @param onProgress - loading progress callback (0-100)
    * @returns load time in ms
    */
   async loadModel(
