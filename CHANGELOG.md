@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.0] - 2026-04-21
+
+### Added
+
+- AI SDK V3 provider at the `react-native-gemma-agent/ai` subpath. `createGemmaProvider(registry, engine)` returns a Vercel AI SDK V3 language model that streams through the same skill-aware tool loop as `useGemmaAgent`.
+- `useLLM()` hook for declarative one-shot generation. Wraps the engine with React state plumbing.
+- `generateStructured()` for schema-validated output. Accepts a Zod v3 schema or raw JSON Schema and parses-and-retries against plain chat output. `toJsonSchema()` and `isZodSchema()` helpers are exported alongside.
+- Multi-model catalog: `BUILT_IN_MODELS`, `getModelEntry`, `listModels`, `resolveModelConfig`, `modelConfigFromEntry`. `GemmaAgentProviderProps.model` now accepts a string ID for any catalog entry as well as a full `ModelConfig`.
+- CLI bin: `npx react-native-gemma-agent pull <model-id>` downloads a catalog GGUF to disk for `adb push`.
+- New types: `ResponseFormat`, `ModelRegistryEntry`, `UseLLMConfig`, `UseLLMReturn`, `StructuredOutputSchema`, `GenerateStructuredInput`, `GenerateStructuredResult`.
+
+### Changed
+
+- `llama.rn` peer minimum is now `0.12.0-rc.8` (was `0.12.0-rc.3`), upper bound `<0.13.0`. Users on earlier rc builds must bump or the install warns; strict pnpm and yarn 2 will fail. Required for the upstream sampler and streaming fixes.
+- `ParsedToolCall.skill` widened from `SkillManifest` to `SkillManifest | null`. The null branch only fires when the new `extraToolNames` option is passed, but strict TypeScript consumers reading `call.skill.name` see a TS2531.
+- `exports` map added. Only `.`, `./ai`, and `./package.json` are public. Deep imports like `react-native-gemma-agent/lib/*` or `/src/*` now error with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+- `InferenceEngine` no longer falls back to `['<end_of_turn>', '<eos>']` when no `stop` is supplied. With `jinja: true` (always on), llama.rn reads the EOS tokens from the GGUF chat-template metadata. Catalog models are unaffected; custom GGUFs with a misconfigured `eos_token_id` may need an explicit `stop` array.
+
+### Fixed
+
+- Structured output via `responseFormat: { type: 'json_schema' }` no longer crashes with `std::exception`. The schema is injected into the system prompt and the output is parsed, validated, and re-asked on failure. The native `responseFormat` passthrough remains wired for the day upstream `llama.cpp` ships the sampler fix. See `docs/ADR/009-structured-output.md`.
+- `reasoning_format` from a registry entry now propagates through `useGemmaAgent` to llama.rn, so reasoning models such as Qwen 3.5 strip thinking tokens correctly.
+
 ## [0.2.0] — 2026-04-14
 
 ### Added
