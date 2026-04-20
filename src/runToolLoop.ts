@@ -100,13 +100,7 @@ export type RunToolLoopInput = {
   systemPrompt: string;
   messages: Message[];
   query: string;
-  /**
-   * Consumer-supplied tools that coexist with registered skills.
-   * Skills run provider-executed (loop continues). When the model calls a
-   * tool that matches an entry here but is NOT a registered skill, the loop
-   * emits tool-input-start + tool-call (without providerExecuted) and
-   * terminates with finishReason 'tool-calls'. The consumer executes it.
-   */
+  /** Consumer-supplied tools that terminate the loop on call (skills keep running provider-executed). */
   extraTools?: ToolDefinition[];
 };
 
