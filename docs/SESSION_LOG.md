@@ -108,30 +108,106 @@ No tag cut. No push. Awaits explicit publish-ready signal.
 
 ---
 
+## 2026-04-21 — pre-publish audit (compat + AI fingerprints)
+
+Two-phase audit to de-risk the v0.3.0 cut against (a) 0.2.1 users upgrading and (b) reviewers skimming the diff for AI-written code. Audit only. No edits, no commits, no tree changes. HEAD stays at `25d64f8`.
+
+Two report files written into `docs/` so they survive context compaction and are grep-able during the fix session. They are transient: delete them (or relocate outside `docs/`) before any `npm publish` so they do not ship in the tarball.
+
+- `docs/V030_COMPAT_REPORT.md`
+- `docs/V030_CODE_HYGIENE_REPORT.md`
+
+### Phase 1: backward-compatibility
+
+Verdict: ship-safe with one documentation task. Baseline `git tag v0.2.1`, diffed against HEAD `25d64f8`.
+
+1. Peer `llama.rn` narrowed from `>=0.12.0-rc.3` to `>=0.12.0-rc.8 <0.13.0`. Users on rc.3..rc.7 or 0.13+ will hit a peer-dep warning; strict pnpm / yarn 2 fails the install. Fix: one CHANGELOG line.
+2. `ParsedToolCall.skill` type widened from `SkillManifest` to `SkillManifest | null`. Strict TS consumers that read `call.skill.name` see a new TS2531. Runtime break only fires when the new `extraToolNames` option is passed. Fix: CHANGELOG mention.
+3. `exports` map restricts deep imports. Any consumer reaching into `react-native-gemma-agent/lib/*` or `/src/*` now hits `ERR_PACKAGE_PATH_NOT_EXPORTED`. Probability low. Fix: CHANGELOG mention.
+4. `InferenceEngine` default stop-tokens removed. With `jinja: true` (always on) and a GGUF that carries a correct `eos_token_id`, catalog models are unaffected. Fix: none needed.
+
+Non-breaking: full new public surface is additive (`BUILT_IN_MODELS`, `getModelEntry`, `listModels`, `modelConfigFromEntry`, `resolveModelConfig`, `useLLM`, `generateStructured`, `toJsonSchema`, `isZodSchema`, `ResponseFormat`, plus the `./ai` subpath). New peer deps (`@ai-sdk/provider`, `zod`, `zod-to-json-schema`) are all flagged optional via `peerDependenciesMeta`; compiled JS contains zero runtime `require` of them except a single lazy `require('zod-to-json-schema')` inside a try / catch.
+
+Install sanity test: packed tarball, installed into a scratch dir with only the 0.2.1 peer set, verified `require('react-native-gemma-agent/ai')` resolves without `@ai-sdk/provider` present. Tarball clean: 155 files, 125 kB packed, zero `__tests__`, zero `.playwright-cli/`, zero `marketing.md`, zero `.DS_Store`. Bin symlink gets executable permission on install (npm normalizes).
+
+### Phase 2: AI-fingerprints + console
+
+Verdict: shipping code is in good shape. Biggest remaining tell is em-dash use in warnings, errors, and a handful of comment blocks.
+
+What passed clean:
+
+- Zero AI-tell words (`delve`, `leverage`, `seamless`, `moreover`, `furthermore`, `utilize`, etc.).
+- Zero marketing puffery (`production-ready`, `cutting-edge`, etc.).
+- Zero `// Step 1` or `// Now we...` narration.
+- Zero "removed" breadcrumbs.
+- Zero over-abstraction (no Factory / Strategy / Builder classes added).
+- Zero dead code, zero gratuitous `console.log`.
+- CLI output in `src/cli/pull.ts` is legitimate (eslint is explicitly disabled at top).
+- One `console.warn` in `KnowledgeStore.ts` is a boundary log.
+- `example/src/*` console calls are intentional TC-23 test markers.
+
+Top 5 most obvious AI tells:
+
+1. `src/useGemmaAgent.ts:150-170`: stacked em-dash narration on the streaming state machine (7 em-dashes plus a "We're in content mode" comment in one 20-line block).
+2. README em-dash density: 42 instances (40 pre-existing from 0.2.1, 2 new in 0.3.0). Shipped to npm and rendered on GitHub.
+3. User-visible warning / error strings with em-dashes across `src/ai/*`, `src/runToolLoop.ts`, `src/SkillSandbox.tsx`, `src/cli/pull.ts`. About 11 sites. These appear in the dev console and the AI SDK `warnings` array.
+4. `src/InferenceEngine.ts:91-92`: `@param name — description` JSDoc convention (em-dash where a hyphen is standard).
+5. Multi-paragraph docstrings on `InferenceEngine._cumulativeUsed`, `getContextUsage()`, `resetContextUsage()`. Rule 7a says one short sentence max on public exports.
+
+Proposed fix order (batches land as separate commits; each batch ends with `npx tsc --noEmit` and `npm test` green):
+
+- Batch 1: em-dashes in user-visible strings. About 11 replacements across 5 files plus 1 test update.
+- Batch 2: em-dashes in JSDoc `@param` lines. 2 lines in `src/InferenceEngine.ts`.
+- Batch 3: em-dashes in inline code comments. About 11 edits across 9 files.
+- Batch 4: collapse multi-paragraph docstrings. 5 sites in `src/InferenceEngine.ts` and `src/runToolLoop.ts`.
+- Batch 5: rewrite `useGemmaAgent.ts` streaming comments. 1 file, about 10 lines.
+- Batch 6 (optional, separate commit): README prose sweep, about 40 em-dashes.
+
+Also pending: one `CHANGELOG.md` entry covering the three Phase 1 items (llama.rn floor bump, `ParsedToolCall.skill` widening, `exports` map restriction) plus the full additive surface.
+
+### My-side checks
+
+- `git status`: four local-only commits on `v0.3.0`, unchanged since end of 2026-04-20. Working tree clean except `.playwright-cli/`, `marketing.md`, and the two new report files in `docs/` (untracked).
+- `npm pack --dry-run`: 155 files, 125 kB. Clean.
+- No code edits performed this session.
+
+---
+
 ## Branch state at end of session
 
-- **Branch:** `v0.3.0` (local only, `origin/v0.3.0` doesn't exist, nothing pushed).
-- **HEAD (before this session's commits):** `ed4416e fix: wire reasoning_format from registry through to llama.rn`.
-- **HEAD (after):** the four commits above layered on top of `ed4416e`.
-- **Reflog recoverable:** `ee497db chore: cut v0.3.0 with TC-23.x blocked on upstream llama.cpp` — the reverted C cut. Available for ~30 days via `git reflog` if we need to flip back.
-- **Working tree after commits:** clean except `.playwright-cli/` and `marketing.md` (untracked, unrelated, do not touch).
+- **Branch:** `v0.3.0` (local only, `origin/v0.3.0` does not exist, nothing pushed).
+- **HEAD:** `25d64f8 docs: session log entry for option B pivot`. Unchanged since 2026-04-20.
+- **Reflog recoverable:** `ee497db chore: cut v0.3.0 with TC-23.x blocked on upstream llama.cpp`, the reverted C cut. Available for about 30 days.
+- **Working tree:** clean except untracked `.playwright-cli/`, `marketing.md`, `docs/V030_COMPAT_REPORT.md`, `docs/V030_CODE_HYGIENE_REPORT.md`.
 
 ---
 
 ## What to pick up next
 
-Regression sweep and commits done 2026-04-20. The v0.3.0 branch now carries option B end-to-end. Nothing is pushed.
+Audit done 2026-04-21. Six fix batches and one CHANGELOG task are queued.
 
-1. **Decide on publish.** When Shashank says publish-ready: tag `v0.3.0`, push the branch + tag, run `npm publish` (`npm whoami` + `npm pack` dry-run first), update npm catalog links. Do not tag or push without an explicit yes.
+1. **Apply Phase 2 fix batches in order.** Each batch lands as its own commit. Run `npx tsc --noEmit` and `npm test` after each batch; do not move on until green. Commit bodies must follow rule 7a (no em-dashes, no AI-tell words, no emojis, no listicle narration).
+   - Batch 1: de-em-dash user-visible strings.
+   - Batch 2: de-em-dash JSDoc `@param` lines.
+   - Batch 3: de-em-dash inline code comments.
+   - Batch 4: collapse multi-paragraph docstrings.
+   - Batch 5: simplify `useGemmaAgent.ts` streaming comments.
+   - Batch 6 (optional): README prose sweep.
 
-2. **Optional upstream filings** (defer or separate PRs):
+2. **Write `CHANGELOG.md` for v0.3.0.** Cover the new surface (AI SDK provider, useLLM, generateStructured, multi-model catalog, CLI bin) plus the three Phase 1 call-outs (llama.rn floor bump, `ParsedToolCall.skill` widening, `exports` deep-import restriction). Mirror a short release-notes paragraph into the README.
+
+3. **Delete or relocate the two report files** before any `npm publish`. They are reference-only; they must not ship in the tarball.
+
+4. **Decide on publish.** When Shashank says publish-ready: tag `v0.3.0`, push the branch + tag, run `npm publish` (`npm whoami` plus `npm pack --dry-run` first). Do not tag or push without an explicit per-operation yes.
+
+5. **Optional upstream filings** (defer or separate PRs):
    - Issue against `mybigday/llama.rn`: minimal repro of the `std::exception` crash. Link `ggml-org/llama.cpp#21571`.
    - Comment on `ggml-org/llama.cpp#21571` with our Gemma 4 + RN JS-bridge repro.
-   - Cosmetic PR against `mybigday/llama.rn`: fix `RNWhisperJSI` logcat tag (two-char change in `cpp/jsi/RNLlamaJSI.cpp` lines 40 and 46).
+   - Cosmetic PR against `mybigday/llama.rn`: fix the `RNWhisperJSI` logcat tag (two-char change in `cpp/jsi/RNLlamaJSI.cpp` lines 40 and 46).
 
-3. **Monitor upstream.** As soon as `mybigday/llama.rn` releases a build with the `common/sampling.cpp:285` slicing fixed or the `generation_prompt` prefill reverted against externally-provided grammars, bump the llama.rn pin, restore the one-line `responseFormat` forwarding in `src/StructuredOutput.ts`, re-run TC-23.1 / TC-23.2. If both pass with `attempts === 1` and no retry activity, revert ADR-009's amendment to finalize the grammar-first path.
+6. **Monitor upstream.** When `mybigday/llama.rn` releases a build with `common/sampling.cpp:285` slicing fixed or the `generation_prompt` prefill reverted against externally-provided grammars: bump the llama.rn pin, restore the one-line `responseFormat` forwarding in `src/StructuredOutput.ts`, re-run TC-23.1 / TC-23.2. If both pass with `attempts === 1`, revert ADR-009's amendment.
 
-4. **LinkedIn.** Phase 23 is a reasonable demo moment: `generateObject` from the Vercel AI SDK returning a validated Zod-typed object from an on-device Gemma 4 model in a React Native app. Reference `docs/LINKEDIN_CONTENT.md` for the angle if going this route.
+7. **LinkedIn.** Phase 23 plus the clean audit make a reasonable demo moment: `generateObject` from the Vercel AI SDK returning a validated Zod-typed object from an on-device Gemma 4 model in a React Native app. See `docs/LINKEDIN_CONTENT.md` for the angle.
 
 ---
 
