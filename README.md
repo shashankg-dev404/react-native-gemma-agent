@@ -1,19 +1,21 @@
 # react-native-gemma-agent
 
-`react-native-gemma-agent` is a React Native SDK for building **on-device AI agents** powered by Google's Gemma 4. Run a complete agent loop — inference, tool calling, and skill execution — entirely on the user's phone with zero cloud dependency, zero API keys, and zero per-inference cost.
+`react-native-gemma-agent` is a React Native SDK for building **on-device AI agents** powered by Google's Gemma 4 and other small local LLMs. Run a complete agent loop (inference, tool calling, and skill execution) entirely on the user's phone with zero cloud dependency, zero API keys, and zero per-inference cost.
+
+> **Heads-up on the rename.** v0.3.0 adds Qwen 3.5, Llama 3.2, and SmolLM2 to the model catalog alongside Gemma 4. To reflect that broader scope, the package will be renamed to `@ondevice-agent/react-native-gemma-agent` in v0.4.0. v0.3.0 still publishes as `react-native-gemma-agent`; a migration note will ship with the rename.
 
 ### Core Features
 
 - 🧠 On-device inference with [Gemma 4 E2B](https://huggingface.co/google/gemma-4-e2b-it) (2.3B effective params) via [llama.rn](https://github.com/mybigday/llama.rn)
-- 🛠️ Pluggable **skill system** — model picks tools, executes them, feeds results back
-- 🔒 Fully offline — no API keys, no network calls, no cloud bill
-- 📓 On-device **knowledge base** — the agent saves, searches, and recalls notes across conversations
+- 🛠️ Pluggable **skill system**: model picks tools, executes them, feeds results back
+- 🔒 Fully offline. No API keys, no network calls, no cloud bill
+- 📓 On-device **knowledge base**: the agent saves, searches, and recalls notes across conversations
 - 🧩 **Native skills** with full React Native access (GPS, calendar, health, file system, Bluetooth)
 - 🌐 **JS skills** sandboxed in a hidden WebView (inspired by Google AI Edge Gallery's Agent Skills)
 - 🗂️ **Skill categories** for grouping tools and selectively loading them at runtime
 - 📊 **Context window monitoring** with a configurable warning callback
-- 🎯 **BM25 skill routing** (opt-in) — smart pre-filter when you have many skills
-- 🪝 React Hooks API — `useGemmaAgent`, `useModelDownload`, `useSkillRegistry`, `useKnowledgeStore`
+- 🎯 **BM25 skill routing** (opt-in): smart pre-filter when you have many skills
+- 🪝 React Hooks API: `useGemmaAgent`, `useModelDownload`, `useSkillRegistry`, `useKnowledgeStore`
 - ⚡ Token-by-token streaming for real-time UI
 - 🧷 Fully typed with TypeScript
 
@@ -53,7 +55,7 @@ https://github.com/user-attachments/assets/576b1419-78d0-43cf-a36a-04a4ba9e5a05
 
 ## Why This Exists
 
-Every major AI framework (LangChain, CrewAI, AutoGen) assumes a cloud LLM. But mobile apps need agents that work **offline**, respect **privacy**, and cost **zero per inference**. This SDK brings the agentic pattern — model thinks, picks a tool, executes it, responds — entirely on-device using Gemma 4's native function calling.
+Every major AI framework (LangChain, CrewAI, AutoGen) assumes a cloud LLM. But mobile apps need agents that work **offline**, respect **privacy**, and cost **zero per inference**. This SDK brings the agentic pattern (model thinks, picks a tool, executes it, responds) entirely on-device using Gemma 4's native function calling.
 
 Inspired by [Google AI Edge Gallery's Agent Skills](https://github.com/google-ai-edge/gallery), rebuilt as a React Native SDK that any developer can drop into their app.
 
@@ -66,7 +68,7 @@ Inspired by [Google AI Edge Gallery's Agent Skills](https://github.com/google-ai
 - Minimum Android API: `26` (Android 8.0)
 - Device RAM: `8 GB+` recommended
 - Disk space: `~3.5 GB` (for model file)
-- `llama.rn` version: `0.12.0-rc.3+`
+- `llama.rn` version: `0.12.0-rc.8+`
 
 **iOS**
 
@@ -216,35 +218,35 @@ Main hook for chat interactions. Returns everything you need to build a chat UI.
 ```tsx
 const {
   sendMessage,         // (text: string, onEvent?) => Promise<string>
-  messages,            // ReadonlyArray<Message> — conversation history
-  streamingText,       // string — tokens streamed so far
-  isProcessing,        // boolean — is the agent thinking/executing?
-  isModelLoaded,       // boolean — model loaded and ready?
-  modelStatus,         // ModelStatus — lifecycle state
-  activeSkill,         // string | null — skill currently executing
-  error,               // string | null — last error
-  contextUsage,        // { used, total, percent } — context window consumption
-  activeCategories,    // string[] | undefined — active skill categories
+  messages,            // ReadonlyArray<Message>: conversation history
+  streamingText,       // string: tokens streamed so far
+  isProcessing,        // boolean: is the agent thinking/executing?
+  isModelLoaded,       // boolean: model loaded and ready?
+  modelStatus,         // ModelStatus: lifecycle state
+  activeSkill,         // string | null: skill currently executing
+  error,               // string | null: last error
+  contextUsage,        // { used, total, percent }: context window consumption
+  activeCategories,    // string[] | undefined: active skill categories
   setActiveCategories, // (categories: string[] | undefined) => void
-  loadModel,           // (onProgress?) => Promise<number> — returns load time ms
+  loadModel,           // (onProgress?) => Promise<number>: returns load time ms
   unloadModel,         // () => Promise<void>
-  reset,               // () => void — clear conversation history
-  resetConversation,   // () => void — clear history + reset context tracking
+  reset,               // () => void: clear conversation history
+  resetConversation,   // () => void: clear history + reset context tracking
 } = useGemmaAgent();
 ```
 
 ### useModelDownload
 
-Hook for model download management. The model is `~3.1 GB` and downloads once. Downloads support **resume** — if the app is killed mid-download, calling `download()` again continues from where it left off.
+Hook for model download management. The model is `~3.1 GB` and downloads once. Downloads support **resume**: if the app is killed mid-download, calling `download()` again continues from where it left off.
 
 ```tsx
 const {
-  download,        // () => Promise<string> — returns file path
+  download,        // () => Promise<string>: returns file path
   cancelDownload,  // () => void
-  checkModel,      // () => Promise<boolean> — is model on device?
-  setModelPath,    // (path: string) => Promise<void> — custom path
+  checkModel,      // () => Promise<boolean>: is model on device?
+  setModelPath,    // (path: string) => Promise<void>: custom path
   deleteModel,     // () => Promise<void>
-  progress,        // DownloadProgress | null — { bytesDownloaded, totalBytes, percent }
+  progress,        // DownloadProgress | null: { bytesDownloaded, totalBytes, percent }
   status,          // ModelStatus
   checkStorage,    // () => Promise<{ available, required, sufficient }>
 } = useModelDownload();
@@ -278,7 +280,7 @@ The SDK supports two skill types: **native** (runs in React Native context with 
 
 | Skill | Type | Network | Category | Description |
 |---|---|---|---|---|
-| `localNotesSkill` | native | No | memory | On-device knowledge base — save, search, recall notes |
+| `localNotesSkill` | native | No | memory | On-device knowledge base: save, search, recall notes |
 | `calculatorSkill` | native | No | utility | Evaluate math expressions (fully offline) |
 | `queryWikipediaSkill` | js | Yes | research | Search and summarize Wikipedia articles |
 | `webSearchSkill` | js | Yes | research | Web search via SearXNG |
@@ -307,7 +309,7 @@ import { readCalendarSkill } from 'react-native-gemma-agent/skills/readCalendar'
 
 ### Native Skills
 
-Native skills have **full access to everything React Native can access** — GPS, camera, calendar, health data, file system, Bluetooth, etc. Use these when your skill needs device APIs.
+Native skills have **full access to everything React Native can access**: GPS, camera, calendar, health data, file system, Bluetooth, etc. Use these when your skill needs device APIs.
 
 ```typescript
 import type { SkillManifest } from 'react-native-gemma-agent';
@@ -330,15 +332,15 @@ const locationSkill: SkillManifest = {
 
 **Typical use cases:**
 
-- **Travel app** — GPS location → find nearby attractions
-- **Fitness app** — HealthKit/Google Fit data → AI coaching
-- **Calendar app** — calendar events → AI scheduling
-- **Photo app** — camera roll access → AI-powered organization
-- **Smart home** — Bluetooth/Wi-Fi device control → voice commands
+- **Travel app:** GPS location → find nearby attractions
+- **Fitness app:** HealthKit/Google Fit data → AI coaching
+- **Calendar app:** calendar events → AI scheduling
+- **Photo app:** camera roll access → AI-powered organization
+- **Smart home:** Bluetooth/Wi-Fi device control → voice commands
 
 ### JS Skills
 
-JS skills run in an isolated WebView — they can make HTTP requests but can't access device APIs. Use these for web-based data fetching.
+JS skills run in an isolated WebView. They can make HTTP requests but can't access device APIs. Use these for web-based data fetching.
 
 ```typescript
 const weatherSkill: SkillManifest = {
@@ -425,13 +427,13 @@ User: "What's my wifi password?"
 Agent: [reads from saved notes] → "Your wifi password is swordfish."
 ```
 
-Notes are stored as markdown files in app-local storage with BM25 search indexing. The note index is injected into the system prompt so the agent is always aware of what it knows — no RAG pipeline, no vector database, no external dependencies.
+Notes are stored as markdown files in app-local storage with BM25 search indexing. The note index is injected into the system prompt so the agent is always aware of what it knows. No RAG pipeline, no vector database, no external dependencies.
 
-**Use cases:** personal preferences, saved facts, flight details, shopping lists, study notes, bookmarks — anything the user wants their AI to remember.
+**Use cases:** personal preferences, saved facts, flight details, shopping lists, study notes, bookmarks, anything the user wants their AI to remember.
 
 ### useKnowledgeStore
 
-Direct access to the on-device note store. Use this to build custom UI around saved notes — listing, editing, or deleting notes outside the chat flow.
+Direct access to the on-device note store. Use this to build custom UI around saved notes: listing, editing, or deleting notes outside the chat flow.
 
 ```tsx
 const {
@@ -440,7 +442,7 @@ const {
   getNote,       // (title) => Promise<Note | null>
   searchNotes,   // (query) => Promise<SearchResult[]>
   deleteNote,    // (title) => Promise<boolean>
-  refresh,       // () => Promise<void> — re-read from storage
+  refresh,       // () => Promise<void>: re-read from storage
 } = useKnowledgeStore();
 ```
 
@@ -448,7 +450,7 @@ Notes live in `{app-dir}/gemma-agent-notes/` with YAML frontmatter (title, tags,
 
 ## Context Window & Memory
 
-The model's "memory" is its **context window** — a rolling buffer of the current conversation. Understanding this is key to building good experiences.
+The model's "memory" is its **context window**: a rolling buffer of the current conversation. Understanding this is key to building good experiences.
 
 | Setting | Default | Range | Tradeoff |
 |---|---|---|---|
@@ -464,7 +466,7 @@ The model's "memory" is its **context window** — a rolling buffer of the curre
 
 **Persistent memory via Knowledge Base:** the `local_notes` skill gives the agent persistent memory across conversations and app restarts. Without it, the model only remembers the current conversation.
 
-**Increasing context:** you can set `contextSize: 8192` or higher — Gemma 4 E2B supports up to `128K`. But more context means more RAM usage and slower prompt processing. On a phone with 8 GB RAM, `4096–8192` is the sweet spot.
+**Increasing context:** you can set `contextSize: 8192` or higher. Gemma 4 E2B supports up to `128K`, but more context means more RAM usage and slower prompt processing. On a phone with 8 GB RAM, `4096–8192` is the sweet spot.
 
 ### Context Warnings
 
@@ -481,7 +483,7 @@ Live context usage tracking with a configurable warning callback. The example ap
 
 ## Model Setup
 
-**Option A — push via ADB (development)**
+**Option A: push via ADB (development)**
 
 ```sh
 huggingface-cli download unsloth/gemma-4-E2B-it-GGUF \
@@ -490,7 +492,7 @@ huggingface-cli download unsloth/gemma-4-E2B-it-GGUF \
 adb push ./models/gemma-4-E2B-it-Q4_K_M.gguf /data/local/tmp/
 ```
 
-**Option B — in-app download**
+**Option B: in-app download**
 
 ```tsx
 const { download, progress, checkStorage } = useModelDownload();
@@ -628,6 +630,8 @@ The SDK ships with a prebuilt catalog. Pass the ID as a string to `GemmaAgentPro
 
 Any GGUF compatible with `llama.rn` should work. Tool calling is tested for the models flagged `yes` above; models flagged `no` are chat-only and will ignore any `skills` you register.
 
+Known gap for v0.3.0: Qwen 3.5 models emit a Hermes-style XML tool-call format (`<tool_call><function=...><parameter=...>`) that neither `llama.rn`'s native parser nor the SDK's fallback recognizes, so the XML currently leaks into chat bubbles. `toolCalling: true` on Qwen 3.5 is aspirational until the fallback parser is extended. Track it in the roadmap below.
+
 ### Letting your user pick a model
 
 If you want to ship an in-app model picker, wire it with the catalog helpers and a `key` prop on the provider. Changing the key remounts the provider under the new model; the conversation resets, which is the correct behaviour when the underlying tokenizer changes.
@@ -664,8 +668,8 @@ function App() {
 
 Inside `<ChatScreen />`, the usual hooks work per-model:
 
-- `useModelDownload()` — `checkModel()`, `download()` with progress, `setModelPath()` for adb-pushed files. All scoped to whichever model the provider currently holds.
-- `useGemmaAgent()` — `loadModel()` / `unloadModel()`.
+- `useModelDownload()`: `checkModel()`, `download()` with progress, `setModelPath()` for adb-pushed files. All scoped to whichever model the provider currently holds.
+- `useGemmaAgent()`: `loadModel()` / `unloadModel()`.
 
 A minimal end-user flow:
 
